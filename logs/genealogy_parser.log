@@ -36,3 +36,47 @@
 2025-05-24 17:39:51 - genealogy_parser - INFO - Terminé: report_generation - Durée: 0.00s
 2025-05-24 17:39:51 - genealogy_parser - INFO - Traitement terminé avec succès
 2025-05-24 17:39:51 - genealogy_parser - INFO - Terminé: process_document - Durée: 0.11s
+2025-05-24 20:44:27 - genealogy_parser - INFO - Début du traitement - Lieu: Notre-Dame d'Esméville
+2025-05-24 20:44:27 - genealogy_parser - INFO - Terminé: text_normalization - Durée: 0.00s
+2025-05-24 20:44:27 - genealogy_parser - INFO - Terminé: segment_extraction - Durée: 0.00s
+2025-05-24 20:44:27 - genealogy_parser - INFO - Terminé: person_extraction - Durée: 0.01s
+2025-05-24 20:44:27 - genealogy_parser - INFO - Terminé: person_creation - Durée: 0.11s
+2025-05-24 20:44:28 - genealogy_parser - INFO - Terminé: acte_processing - Durée: 0.06s
+2025-05-24 20:44:28 - genealogy_parser - INFO - Terminé: chronology_validation - Durée: 0.00s
+2025-05-24 20:44:28 - genealogy_parser - INFO - Terminé: gender_validation - Durée: 0.00s
+2025-05-24 20:44:28 - genealogy_parser - INFO - Terminé: report_generation - Durée: 0.00s
+2025-05-24 20:44:28 - genealogy_parser - INFO - Traitement terminé avec succès
+2025-05-24 20:44:28 - genealogy_parser - INFO - Terminé: process_document - Durée: 0.26s
+2025-05-24 20:44:28 - genealogy_parser - INFO - Début du traitement - Lieu: Notre-Dame d'Esméville
+2025-05-24 20:44:28 - genealogy_parser - INFO - Terminé: text_normalization - Durée: 0.00s
+2025-05-24 20:44:28 - genealogy_parser - INFO - Terminé: segment_extraction - Durée: 0.00s
+2025-05-24 20:44:28 - genealogy_parser - INFO - Terminé: person_extraction - Durée: 0.01s
+2025-05-24 20:44:28 - genealogy_parser - INFO - Terminé: person_creation - Durée: 0.02s
+2025-05-24 20:44:28 - genealogy_parser - INFO - Terminé: acte_processing - Durée: 0.01s
+2025-05-24 20:44:28 - genealogy_parser - INFO - Terminé: chronology_validation - Durée: 0.00s
+2025-05-24 20:44:28 - genealogy_parser - INFO - Terminé: gender_validation - Durée: 0.00s
+2025-05-24 20:44:28 - genealogy_parser - INFO - Terminé: report_generation - Durée: 0.00s
+2025-05-24 20:44:28 - genealogy_parser - INFO - Traitement terminé avec succès
+2025-05-24 20:44:28 - genealogy_parser - INFO - Terminé: process_document - Durée: 0.04s
+2025-05-24 21:38:30 - genealogy_parser - INFO - Début du traitement - Lieu: Notre-Dame d'Esméville
+2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: text_normalization - Durée: 0.00s
+2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: segment_extraction - Durée: 0.00s
+2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: person_extraction - Durée: 0.01s
+2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: person_creation - Durée: 0.04s
+2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: acte_processing - Durée: 0.07s
+2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: chronology_validation - Durée: 0.00s
+2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: gender_validation - Durée: 0.00s
+2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: report_generation - Durée: 0.00s
+2025-05-24 21:38:30 - genealogy_parser - INFO - Traitement terminé avec succès
+2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: process_document - Durée: 0.18s
+2025-05-24 21:38:30 - genealogy_parser - INFO - Début du traitement - Lieu: Notre-Dame d'Esméville
+2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: text_normalization - Durée: 0.00s
+2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: segment_extraction - Durée: 0.00s
+2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: person_extraction - Durée: 0.00s
+2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: person_creation - Durée: 0.00s
+2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: acte_processing - Durée: 0.01s
+2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: chronology_validation - Durée: 0.00s
+2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: gender_validation - Durée: 0.00s
+2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: report_generation - Durée: 0.00s
+2025-05-24 21:38:30 - genealogy_parser - INFO - Traitement terminé avec succès
+2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: process_document - Durée: 0.02s

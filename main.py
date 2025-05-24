@@ -1,12 +1,13 @@
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
 # Imports locaux
 from config.settings import ParserConfig
-from core.models import Person, ActeParoissial
+from core.models import Person, ActeParoissial, ActeType
 from parsers.text_parser import TextParser
 from parsers.name_extractor import NameExtractor
 from parsers.date_parser import DateParser
@@ -17,13 +18,13 @@ from validators.gender_validator import GenderValidator
 from database.person_manager import PersonManager
 from database.acte_manager import ActeManager
 from exporters.report_generator import ReportGenerator
-from exporters.gedcom_exporter import GedcomExporter  # CORRECTION: Ajouter import manquant
+from exporters.gedcom_exporter import GedcomExporter
 from exporters.json_exporter import JsonExporter
 from utils.logging_config import setup_logging, PerformanceLogger
 from utils.text_utils import TextNormalizer
 
 class GenealogyParser:
-    """Parser généalogique principal avec architecture modulaire complète"""
+    """Parser généalogique principal avec architecture modulaire complète - VERSION CORRIGÉE"""
     
     def __init__(self, config_path: Optional[str] = None):
         # Configuration
@@ -120,7 +121,7 @@ class GenealogyParser:
         return self._report_generator
     
     def process_document(self, text: str, lieu: str = "Notre-Dame d'Esméville") -> Dict:
-        """Traitement complet d'un document avec toutes les optimisations"""
+        """Traitement complet d'un document avec toutes les optimisations - CORRIGÉ"""
         self.perf_logger.start_timer("process_document")
         self.logger.info(f"Début du traitement - Lieu: {lieu}")
         
@@ -194,29 +195,60 @@ class GenealogyParser:
             raise
     
     def _process_persons(self, persons_data: List[Dict], context: str) -> List[Person]:
-        """Traitement optimisé des personnes"""
+        """CORRIGÉ: Traitement optimisé des personnes avec nettoyage"""
         created_persons = []
         
         for person_info in persons_data:
-            # Ajouter le contexte global pour validation
-            person_info['context'] = context
-            
             try:
+                # CORRIGÉ: Nettoyer extra_info avant de passer à get_or_create_person
+                clean_extra_info = self._clean_person_info(person_info)
+                clean_extra_info['context'] = context
+                
                 person = self.person_manager.get_or_create_person(
                     person_info['nom'],
                     person_info['prenom'],
-                    person_info
+                    clean_extra_info
                 )
                 created_persons.append(person)
                 
             except Exception as e:
-                self.logger.warning(f"Erreur traitement personne {person_info.get('nom_complet')}: {e}")
+                self.logger.warning(f"Erreur traitement personne {person_info.get('nom_complet', 'INCONNU')}: {e}")
                 continue
         
         return created_persons
     
+    def _clean_person_info(self, person_info: Dict) -> Dict:
+        """NOUVEAU: Nettoie les informations de personne avant traitement"""
+        clean_info = {}
+        
+        for key, value in person_info.items():
+            try:
+                if isinstance(value, (str, int, float, bool)) or value is None:
+                    clean_info[key] = value
+                elif isinstance(value, list):
+                    # Nettoyer les listes
+                    clean_list = []
+                    for item in value:
+                        if isinstance(item, (str, int, float, bool)) or item is None:
+                            clean_list.append(item)
+                        elif isinstance(item, dict):
+                            # Ignorer les dict complexes
+                            continue
+                        else:
+                            # Convertir en string les autres types
+                            clean_list.append(str(item))
+                    clean_info[key] = clean_list
+                else:
+                    clean_info[key] = str(value)
+                    
+            except Exception as e:
+                self.logger.debug(f"Erreur nettoyage {key}: {e}")
+                continue
+        
+        return clean_info
+    
     def _process_actes(self, segments: List[Dict], persons: List[Person]) -> List[ActeParoissial]:
-        """Traitement des actes à partir des segments"""
+        """CORRIGÉ: Traitement des actes avec extraction des relations"""
         created_actes = []
         
         for segment in segments:
@@ -224,7 +256,7 @@ class GenealogyParser:
                 continue
             
             try:
-                # Analyse du segment pour détecter le type d'acte
+                # CORRIGÉ: Analyse du segment pour détecter le type d'acte et relations
                 acte_info = self._analyze_segment_for_acte(segment, persons)
                 
                 if acte_info:
@@ -242,7 +274,7 @@ class GenealogyParser:
         return created_actes
     
     def _analyze_segment_for_acte(self, segment: Dict, persons: List[Person]) -> Optional[Dict]:
-        """Analyse un segment pour créer un acte"""
+        """CORRIGÉ: Analyse complète d'un segment avec extraction des relations"""
         content = segment['content']
         
         # Détecter le type d'acte
@@ -254,88 +286,214 @@ class GenealogyParser:
         dates = self.date_parser.extract_all_dates(content)
         main_date = dates[0] if dates else None
         
-        # Extraire les relations
-        relationships = self.relationship_parser.extract_relationships(content)
+        # CORRIGÉ: Extraire les relations spécifiques
+        person_assignments = self._extract_relations_from_content(content)
         
-        # Identifier les personnes impliquées
-        person_assignments = self._assign_persons_to_acte(content, relationships, persons)
-        
-        return {
+        acte_info = {
             'type_acte': acte_type,
             'date': main_date.original_text if main_date else "",
             'texte_original': content,
-            'notable': self._is_acte_notable(content),
-            **person_assignments
+            'person_assignments': person_assignments,
+            'notable': self._is_acte_notable(content)
         }
+        
+        # NOUVEAU: Mapper les noms vers les IDs de personnes
+        acte_info = self._map_names_to_person_ids(acte_info, persons)
+        
+        return acte_info
+    
+    def _extract_relations_from_content(self, content: str) -> Dict:
+        """NOUVEAU: Extraction précise des relations depuis le contenu"""
+        person_assignments = {}
+        
+        try:
+            # Extraction "Charlotte, fille de Jean Le Boucher... et de Françoise Varin"
+            fille_pattern = r'([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?),\s+fille\s+de\s+([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?)(?:\s*,\s*[^,]*?)?\s+et\s+de\s+([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?)(?:[,;]|$)'
+            fille_match = re.search(fille_pattern, content, re.IGNORECASE)
+            
+            if fille_match:
+                enfant_nom = fille_match.group(1).strip()
+                pere_nom = fille_match.group(2).strip()
+                mere_nom = fille_match.group(3).strip()
+                
+                person_assignments.update({
+                    'enfant_nom': enfant_nom,
+                    'pere_nom': pere_nom,
+                    'mere_nom': mere_nom
+                })
+            
+            # Extraction "fils de" pattern
+            fils_pattern = r'([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?),\s+fils\s+de\s+([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?)(?:\s+et\s+de\s+([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìínîïðñòóôõö÷øùúûüýþÿ\s]+?))?[,;]'
+            fils_match = re.search(fils_pattern, content, re.IGNORECASE)
+            
+            if fils_match:
+                enfant_nom = fils_match.group(1).strip()
+                pere_nom = fils_match.group(2).strip()
+                mere_nom = fils_match.group(3).strip() if fils_match.group(3) else None
+                
+                person_assignments.update({
+                    'enfant_nom': enfant_nom,
+                    'pere_nom': pere_nom,
+                    'mere_nom': mere_nom
+                })
+            
+            # Extraction parrain "parr.: Charles Le Boucher"
+            parrain_pattern = r'parr\.?\s*:\s*([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?)(?:[,;.]|$)'
+            parrain_match = re.search(parrain_pattern, content, re.IGNORECASE)
+            
+            if parrain_match:
+                person_assignments['parrain_nom'] = parrain_match.group(1).strip()
+            
+            # Extraction marraine "marr.: Perrette Dupré"
+            marraine_pattern = r'marr\.?\s*:\s*([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?)(?:[,;.]|$)'
+            marraine_match = re.search(marraine_pattern, content, re.IGNORECASE)
+            
+            if marraine_match:
+                person_assignments['marraine_nom'] = marraine_match.group(1).strip()
+            
+            # Extraction épouse "Françoise Picot, épouse de Charles Le Boucher"
+            epouse_pattern = r'([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?),\s+épouse\s+de\s+([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþ ÿ\s]+?)(?:[,;.]|$)'
+            epouse_match = re.search(epouse_pattern, content, re.IGNORECASE)
+            
+            if epouse_match:
+                person_assignments.update({
+                    'epouse_nom': epouse_match.group(1).strip(),
+                    'mari_nom': epouse_match.group(2).strip()
+                })
+                
+        except Exception as e:
+            self.logger.warning(f"Erreur extraction relations: {e}")
+        
+        return person_assignments
+    
+    def _map_names_to_person_ids(self, acte_info: Dict, persons: List[Person]) -> Dict:
+        """NOUVEAU: Mappe les noms extraits vers les IDs des personnes"""
+        person_assignments = acte_info.get('person_assignments', {})
+        
+        try:
+            # Créer un mapping nom -> personne (insensible à la casse)
+            name_to_person = {}
+            for person in persons:
+                name_key = person.full_name.lower().strip()
+                name_to_person[name_key] = person
+            
+            # Mapper chaque nom vers un ID
+            if 'enfant_nom' in person_assignments:
+                enfant_name = person_assignments['enfant_nom'].lower().strip()
+                if enfant_name in name_to_person:
+                    acte_info['personne_principale_id'] = name_to_person[enfant_name].id
+            
+            if 'pere_nom' in person_assignments:
+                pere_name = person_assignments['pere_nom'].lower().strip()
+                if pere_name in name_to_person:
+                    acte_info['pere_id'] = name_to_person[pere_name].id
+            
+            if 'mere_nom' in person_assignments:
+                mere_name = person_assignments['mere_nom'].lower().strip()
+                if mere_name in name_to_person:
+                    acte_info['mere_id'] = name_to_person[mere_name].id
+            
+            if 'parrain_nom' in person_assignments:
+                parrain_name = person_assignments['parrain_nom'].lower().strip()
+                if parrain_name in name_to_person:
+                    acte_info['parrain_id'] = name_to_person[parrain_name].id
+            
+            if 'marraine_nom' in person_assignments:
+                marraine_name = person_assignments['marraine_nom'].lower().strip()
+                if marraine_name in name_to_person:
+                    acte_info['marraine_id'] = name_to_person[marraine_name].id
+            
+            if 'epouse_nom' in person_assignments and 'mari_nom' in person_assignments:
+                epouse_name = person_assignments['epouse_nom'].lower().strip()
+                mari_name = person_assignments['mari_nom'].lower().strip()
+                
+                if epouse_name in name_to_person:
+                    acte_info['personne_principale_id'] = name_to_person[epouse_name].id
+                if mari_name in name_to_person:
+                    acte_info['conjoint_id'] = name_to_person[mari_name].id
+                    
+        except Exception as e:
+            self.logger.warning(f"Erreur mapping noms->IDs: {e}")
+        
+        return acte_info
     
     def _detect_acte_type(self, content: str) -> Optional[str]:
-        """Détecte le type d'acte depuis le contenu"""
+        """CORRIGÉ: Détection améliorée des types d'actes"""
+        if not content:
+            return None
+        
         content_lower = content.lower()
         
-        if any(keyword in content_lower for keyword in ['baptême', 'bapt.']):
-            return 'baptême'
-        elif any(keyword in content_lower for keyword in ['mariage', 'mar.', 'épouse']):
-            return 'mariage'
-        elif any(keyword in content_lower for keyword in ['inhumation', 'inh.']):
-            return 'inhumation'
-        elif 'prise de possession' in content_lower:
+        # Priorité aux mots-clés spécifiques
+        if 'prise de possession' in content_lower:
             return 'prise_possession'
+        elif any(word in content_lower for word in ['baptême', 'bapt.', 'naissance et baptême', 'fille de', 'fils de']):
+            return 'baptême'
+        elif any(word in content_lower for word in ['mariage', 'mar.', 'époux', 'épouse de']):
+            return 'mariage'
+        elif any(word in content_lower for word in ['inhumation', 'inh.', 'décès', 'enterrement']):
+            return 'inhumation'
+        elif 'acte de vente' in content_lower:
+            return 'acte_vente'
         
         return None
     
-    def _assign_persons_to_acte(self, content: str, relationships: List[Dict], 
-                              persons: List[Person]) -> Dict:
-        """Assigne les personnes aux rôles dans l'acte"""
-        assignments = {}
-        
-        # Logique d'assignation basée sur les relations et le contenu
-        # Cette partie nécessiterait une logique plus complexe selon le type d'acte
-        
-        return assignments
-    
     def _is_acte_notable(self, content: str) -> bool:
         """Détermine si l'acte concerne un notable"""
+        if not content:
+            return False
+        
         content_lower = content.lower()
         notable_indicators = [
             "dans l'église", "dans l'eglise", "dans la chapelle",
-            "sous le chœur", "près de l'autel"
+            "sous le chœur", "près de l'autel", "inhumé dans l'église"
         ]
         return any(indicator in content_lower for indicator in notable_indicators)
     
     def export_to_gedcom(self, output_path: str):
         """Export au format GEDCOM"""
-        gedcom_exporter = GedcomExporter(self.config)
-        gedcom_exporter.export(
-            self.person_manager.persons,
-            self.acte_manager.actes,
-            output_path
-        )
-        self.logger.info(f"Export GEDCOM créé: {output_path}")
+        try:
+            gedcom_exporter = GedcomExporter(self.config)
+            gedcom_exporter.export(
+                self.person_manager.persons,
+                self.acte_manager.actes,
+                output_path
+            )
+            self.logger.info(f"Export GEDCOM créé: {output_path}")
+        except Exception as e:
+            self.logger.error(f"Erreur export GEDCOM: {e}")
     
     def export_to_json(self, output_path: str):
         """Export au format JSON"""
-        json_exporter = JsonExporter(self.config)
-        json_exporter.export(
-            self.person_manager.persons,
-            self.acte_manager.actes,
-            output_path
-        )
-        self.logger.info(f"Export JSON créé: {output_path}")
+        try:
+            json_exporter = JsonExporter(self.config)
+            json_exporter.export(
+                self.person_manager.persons,
+                self.acte_manager.actes,
+                output_path
+            )
+            self.logger.info(f"Export JSON créé: {output_path}")
+        except Exception as e:
+            self.logger.error(f"Erreur export JSON: {e}")
     
     def get_global_statistics(self) -> Dict:
         """Retourne les statistiques globales du parser"""
-        person_stats = self.person_manager.get_statistics()
-        acte_stats = self.acte_manager.get_statistics()
-        
-        return {
-            'global': self.global_stats,
-            'persons': person_stats,
-            'actes': acte_stats,
-            'performance': {
-                'cache_hit_rate': person_stats.get('cache_hit_rate', 0),
-                'avg_processing_time': self.global_stats['processing_time'] / max(1, self.global_stats['documents_processed'])
+        try:
+            person_stats = self.person_manager.get_statistics()
+            acte_stats = self.acte_manager.get_statistics()
+            
+            return {
+                'global': self.global_stats,
+                'persons': person_stats,
+                'actes': acte_stats,
+                'performance': {
+                    'cache_hit_rate': person_stats.get('cache_hit_rate', 0),
+                    'avg_processing_time': self.global_stats['processing_time'] / max(1, self.global_stats['documents_processed'])
+                }
             }
-        }
+        except Exception as e:
+            self.logger.error(f"Erreur calcul statistiques: {e}")
+            return {'error': str(e)}
 
 def main():
     """Point d'entrée principal avec interface en ligne de commande"""
