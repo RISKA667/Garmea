@@ -1,0 +1,38 @@
+2025-05-24 17:39:50 - genealogy_parser - INFO - Début du traitement - Lieu: Notre-Dame d'Esméville
+2025-05-24 17:39:50 - genealogy_parser - INFO - Terminé: text_normalization - Durée: 0.00s
+2025-05-24 17:39:50 - genealogy_parser - INFO - Terminé: segment_extraction - Durée: 0.00s
+2025-05-24 17:39:50 - genealogy_parser - INFO - Terminé: person_extraction - Durée: 0.07s
+2025-05-24 17:39:50 - genealogy_parser - WARNING - Erreur traitement personne Charles de Montigny: unhashable type: 'dict'
+2025-05-24 17:39:50 - genealogy_parser - WARNING - Erreur traitement personne Guillaume Le Breton: unhashable type: 'dict'
+2025-05-24 17:39:50 - genealogy_parser - WARNING - Erreur traitement personne Jean Le Boucher: unhashable type: 'dict'
+2025-05-24 17:39:50 - genealogy_parser - WARNING - Erreur traitement personne Charles Le Boucher: unhashable type: 'dict'
+2025-05-24 17:39:50 - genealogy_parser - WARNING - Erreur traitement personne Charles Demontigny: unhashable type: 'dict'
+2025-05-24 17:39:50 - genealogy_parser - WARNING - Erreur traitement personne Françoise Picot: unhashable type: 'dict'
+2025-05-24 17:39:50 - genealogy_parser - WARNING - Erreur traitement personne Françoise Varin: unhashable type: 'dict'
+2025-05-24 17:39:50 - genealogy_parser - WARNING - Erreur traitement personne Perrette Dupré: unhashable type: 'dict'
+2025-05-24 17:39:50 - genealogy_parser - INFO - Terminé: person_creation - Durée: 0.01s
+2025-05-24 17:39:50 - genealogy_parser - INFO - Terminé: acte_processing - Durée: 0.00s
+2025-05-24 17:39:50 - genealogy_parser - INFO - Terminé: chronology_validation - Durée: 0.00s
+2025-05-24 17:39:50 - genealogy_parser - INFO - Terminé: gender_validation - Durée: 0.00s
+2025-05-24 17:39:50 - genealogy_parser - INFO - Terminé: report_generation - Durée: 0.00s
+2025-05-24 17:39:50 - genealogy_parser - INFO - Traitement terminé avec succès
+2025-05-24 17:39:50 - genealogy_parser - INFO - Terminé: process_document - Durée: 0.21s
+2025-05-24 17:39:50 - genealogy_parser - INFO - Début du traitement - Lieu: Notre-Dame d'Esméville
+2025-05-24 17:39:50 - genealogy_parser - INFO - Terminé: text_normalization - Durée: 0.00s
+2025-05-24 17:39:51 - genealogy_parser - INFO - Terminé: segment_extraction - Durée: 0.00s
+2025-05-24 17:39:51 - genealogy_parser - INFO - Terminé: person_extraction - Durée: 0.02s
+2025-05-24 17:39:51 - genealogy_parser - WARNING - Erreur traitement personne Charles de Montigny: unhashable type: 'dict'
+2025-05-24 17:39:51 - genealogy_parser - WARNING - Erreur traitement personne Guillaume Le Breton: unhashable type: 'dict'
+2025-05-24 17:39:51 - genealogy_parser - WARNING - Erreur traitement personne Jean Le Boucher: unhashable type: 'dict'
+2025-05-24 17:39:51 - genealogy_parser - WARNING - Erreur traitement personne Charles Le Boucher: unhashable type: 'dict'
+2025-05-24 17:39:51 - genealogy_parser - WARNING - Erreur traitement personne Charles Demontigny: unhashable type: 'dict'
+2025-05-24 17:39:51 - genealogy_parser - WARNING - Erreur traitement personne Françoise Picot: unhashable type: 'dict'
+2025-05-24 17:39:51 - genealogy_parser - WARNING - Erreur traitement personne Françoise Varin: unhashable type: 'dict'
+2025-05-24 17:39:51 - genealogy_parser - WARNING - Erreur traitement personne Perrette Dupré: unhashable type: 'dict'
+2025-05-24 17:39:51 - genealogy_parser - INFO - Terminé: person_creation - Durée: 0.04s
+2025-05-24 17:39:51 - genealogy_parser - INFO - Terminé: acte_processing - Durée: 0.01s
+2025-05-24 17:39:51 - genealogy_parser - INFO - Terminé: chronology_validation - Durée: 0.00s
+2025-05-24 17:39:51 - genealogy_parser - INFO - Terminé: gender_validation - Durée: 0.00s
+2025-05-24 17:39:51 - genealogy_parser - INFO - Terminé: report_generation - Durée: 0.00s
+2025-05-24 17:39:51 - genealogy_parser - INFO - Traitement terminé avec succès
+2025-05-24 17:39:51 - genealogy_parser - INFO - Terminé: process_document - Durée: 0.11s
