@@ -80,3 +80,176 @@
 2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: report_generation - Durée: 0.00s
 2025-05-24 21:38:30 - genealogy_parser - INFO - Traitement terminé avec succès
 2025-05-24 21:38:30 - genealogy_parser - INFO - Terminé: process_document - Durée: 0.02s
+2025-05-24 23:30:49 - genealogy_parser - INFO - Début du traitement - Lieu: Notre-Dame d'Esméville
+2025-05-24 23:30:49 - genealogy_parser - INFO - Terminé: text_normalization - Durée: 0.00s
+2025-05-24 23:30:49 - genealogy_parser - INFO - Terminé: segment_extraction - Durée: 0.00s
+2025-05-24 23:30:49 - genealogy_parser - INFO - Terminé: person_extraction - Durée: 0.01s
+2025-05-24 23:30:49 - genealogy_parser - INFO - Terminé: person_creation - Durée: 0.06s
+2025-05-24 23:30:49 - genealogy_parser - INFO - Terminé: acte_processing - Durée: 0.03s
+2025-05-24 23:30:49 - genealogy_parser - INFO - Terminé: chronology_validation - Durée: 0.00s
+2025-05-24 23:30:49 - genealogy_parser - INFO - Terminé: gender_validation - Durée: 0.00s
+2025-05-24 23:30:49 - genealogy_parser - INFO - Terminé: report_generation - Durée: 0.00s
+2025-05-24 23:30:49 - genealogy_parser - INFO - Traitement terminé avec succès
+2025-05-24 23:30:49 - genealogy_parser - INFO - Terminé: process_document - Durée: 0.12s
+2025-05-24 23:30:49 - genealogy_parser - INFO - Début du traitement - Lieu: Notre-Dame d'Esméville
+2025-05-24 23:30:49 - genealogy_parser - INFO - Terminé: text_normalization - Durée: 0.00s
+2025-05-24 23:30:49 - genealogy_parser - INFO - Terminé: segment_extraction - Durée: 0.00s
+2025-05-24 23:30:49 - genealogy_parser - INFO - Terminé: person_extraction - Durée: 0.00s
+2025-05-24 23:30:49 - genealogy_parser - INFO - Terminé: person_creation - Durée: 0.00s
+2025-05-24 23:30:49 - genealogy_parser - INFO - Terminé: acte_processing - Durée: 0.00s
+2025-05-24 23:30:49 - genealogy_parser - INFO - Terminé: chronology_validation - Durée: 0.00s
+2025-05-24 23:30:49 - genealogy_parser - INFO - Terminé: gender_validation - Durée: 0.00s
+2025-05-24 23:30:49 - genealogy_parser - INFO - Terminé: report_generation - Durée: 0.00s
+2025-05-24 23:30:49 - genealogy_parser - INFO - Traitement terminé avec succès
+2025-05-24 23:30:49 - genealogy_parser - INFO - Terminé: process_document - Durée: 0.02s
+2025-05-24 23:33:10 - genealogy_parser - INFO - Début du traitement - Lieu: Notre-Dame d'Esméville
+2025-05-24 23:33:10 - genealogy_parser - INFO - Terminé: text_normalization - Durée: 0.00s
+2025-05-24 23:33:10 - genealogy_parser - INFO - Terminé: segment_extraction - Durée: 0.00s
+2025-05-24 23:33:10 - genealogy_parser - INFO - Terminé: person_extraction - Durée: 0.01s
+2025-05-24 23:33:10 - genealogy_parser - INFO - Terminé: person_creation - Durée: 0.00s
+2025-05-24 23:33:10 - genealogy_parser - INFO - Terminé: acte_processing - Durée: 0.02s
+2025-05-24 23:33:10 - genealogy_parser - INFO - Terminé: chronology_validation - Durée: 0.00s
+2025-05-24 23:33:10 - genealogy_parser - INFO - Terminé: gender_validation - Durée: 0.00s
+2025-05-24 23:33:10 - genealogy_parser - INFO - Terminé: report_generation - Durée: 0.00s
+2025-05-24 23:33:10 - genealogy_parser - INFO - Traitement terminé avec succès
+2025-05-24 23:33:10 - genealogy_parser - INFO - Terminé: process_document - Durée: 0.05s
+2025-05-24 23:33:10 - genealogy_parser - INFO - Début du traitement - Lieu: Notre-Dame d'Esméville
+2025-05-24 23:33:10 - genealogy_parser - INFO - Terminé: text_normalization - Durée: 0.00s
+2025-05-24 23:33:10 - genealogy_parser - INFO - Terminé: segment_extraction - Durée: 0.00s
+2025-05-24 23:33:10 - genealogy_parser - INFO - Terminé: person_extraction - Durée: 0.00s
+2025-05-24 23:33:10 - genealogy_parser - INFO - Terminé: person_creation - Durée: 0.00s
+2025-05-24 23:33:10 - genealogy_parser - INFO - Terminé: acte_processing - Durée: 0.00s
+2025-05-24 23:33:10 - genealogy_parser - INFO - Terminé: chronology_validation - Durée: 0.00s
+2025-05-24 23:33:10 - genealogy_parser - INFO - Terminé: gender_validation - Durée: 0.00s
+2025-05-24 23:33:10 - genealogy_parser - INFO - Terminé: report_generation - Durée: 0.00s
+2025-05-24 23:33:10 - genealogy_parser - INFO - Traitement terminé avec succès
+2025-05-24 23:33:10 - genealogy_parser - INFO - Terminé: process_document - Durée: 0.03s
+2025-05-24 23:48:51 - genealogy_parser - INFO - Début du traitement - Lieu: Notre-Dame d'Esméville
+2025-05-24 23:48:51 - genealogy_parser - INFO - Terminé: text_normalization - Durée: 0.00s
+2025-05-24 23:48:51 - genealogy_parser - INFO - Terminé: segment_extraction - Durée: 0.00s
+2025-05-24 23:48:51 - genealogy_parser - INFO - Terminé: person_extraction - Durée: 0.05s
+2025-05-24 23:48:51 - genealogy_parser - INFO - DATE NAISSANCE DÉTECTÉE pour Jean Le Boucher: 13 février 1643
+2025-05-24 23:48:51 - genealogy_parser - INFO - DATE NAISSANCE ASSIGNÉE à Jean Le Boucher: 13 février 1643
+2025-05-24 23:48:51 - genealogy_parser - INFO - DATE NAISSANCE DÉTECTÉE pour Françoise Varin: 13 février 1643
+2025-05-24 23:48:51 - genealogy_parser - INFO - DATE NAISSANCE ASSIGNÉE à Françoise Varin: 13 février 1643
+2025-05-24 23:48:51 - genealogy_parser - INFO - Terminé: person_creation - Durée: 0.05s
+2025-05-24 23:48:51 - genealogy_parser - INFO - Traitement de 5 segments pour créer des actes
+2025-05-24 23:48:51 - genealogy_parser - INFO - TYPE ACTE DÉTECTÉ: baptême
+2025-05-24 23:48:51 - genealogy_parser - WARNING - Aucun mapping nom->ID réussi
+2025-05-24 23:48:51 - genealogy_parser - INFO - ACTE CRÉÉ: Type=baptême, Date=, Personnes=0
+2025-05-24 23:48:51 - genealogy_parser - INFO - Avertissements acte 1: ['Acte sans date', 'Baptême sans parents identifiés']
+2025-05-24 23:48:51 - genealogy_parser - INFO - ACTE 1 CRÉÉ avec succès: baptême
+2025-05-24 23:48:51 - genealogy_parser - WARNING - AUCUN TYPE ACTE DÉTECTÉ pour: Charles de Montigny, Guillaume Le Breton, curés....
+2025-05-24 23:48:51 - genealogy_parser - WARNING - Aucun type d'acte détecté pour: Charles de Montigny, Guillaume Le Breton, curés....
+2025-05-24 23:48:51 - genealogy_parser - WARNING - Impossible de créer un acte pour le segment 1
+2025-05-24 23:48:51 - genealogy_parser - WARNING - AUCUN TYPE ACTE DÉTECTÉ pour: « L'an de grâce 1643, le dimanche 8e jour de mars,...
+2025-05-24 23:48:51 - genealogy_parser - WARNING - Aucun type d'acte détecté pour: « L'an de grâce 1643, le dimanche 8e jour de mars,...
+2025-05-24 23:48:51 - genealogy_parser - WARNING - Impossible de créer un acte pour le segment 2
+2025-05-24 23:48:51 - genealogy_parser - INFO - TYPE ACTE DÉTECTÉ: inhumation
+2025-05-24 23:48:51 - genealogy_parser - WARNING - Aucun mapping nom->ID réussi
+2025-05-24 23:48:51 - genealogy_parser - INFO - ACTE CRÉÉ: Type=inhumation, Date=1646, 13 fév, Personnes=0
+2025-05-24 23:48:51 - genealogy_parser - WARNING - Erreurs validation acte 2: ['Inhumation sans défunt identifié']
+2025-05-24 23:48:51 - genealogy_parser - INFO - ACTE 2 CRÉÉ avec succès: inhumation
+2025-05-24 23:48:51 - genealogy_parser - INFO - TYPE ACTE DÉTECTÉ: baptême
+2025-05-24 23:48:51 - genealogy_parser - INFO - FILIATION DÉTECTÉE: Charlotte fille de Jean Le Boucher et Françoise Varin
+2025-05-24 23:48:51 - genealogy_parser - INFO - PARRAIN DÉTECTÉ: Charles Le Boucher
+2025-05-24 23:48:51 - genealogy_parser - INFO - MARRAINE DÉTECTÉE: Perrette Dupré
+2025-05-24 23:48:51 - genealogy_parser - INFO - MARIAGE DÉTECTÉ: de Françoise Picot épouse de Charles Le Boucher
+2025-05-24 23:48:51 - genealogy_parser - INFO - MAPPINGS RÉUSSIS: père: Jean Le Boucher -> ID 3; mère: Françoise Varin -> ID 6; parrain: Charles Le Boucher -> ID 4; marraine: Perrette Dupré -> ID 7; mari: Charles Le Boucher -> ID 4
+2025-05-24 23:48:51 - genealogy_parser - WARNING - NOM NON TROUVÉ: Charlotte (clé: enfant_nom)
+2025-05-24 23:48:51 - genealogy_parser - WARNING - NOM NON TROUVÉ: de Françoise Picot (clé: epouse_nom)
+2025-05-24 23:48:51 - genealogy_parser - INFO - ACTE CRÉÉ: Type=baptême, Date=1651, 23 janv., Personnes=7
+2025-05-24 23:48:51 - genealogy_parser - INFO - ACTE 3 CRÉÉ avec succès: baptême
+2025-05-24 23:48:51 - genealogy_parser - INFO - Nombre total d'actes créés: 3
+2025-05-24 23:48:51 - genealogy_parser - INFO - Terminé: acte_processing - Durée: 0.05s
+2025-05-24 23:48:51 - genealogy_parser - INFO - Terminé: chronology_validation - Durée: 0.00s
+2025-05-24 23:48:51 - genealogy_parser - INFO - Terminé: gender_validation - Durée: 0.00s
+2025-05-24 23:48:51 - genealogy_parser - INFO - Terminé: report_generation - Durée: 0.00s
+2025-05-24 23:48:51 - genealogy_parser - INFO - Traitement terminé avec succès
+2025-05-24 23:48:51 - genealogy_parser - INFO - Terminé: process_document - Durée: 0.17s
+2025-05-24 23:49:12 - genealogy_parser - INFO - Début du traitement - Lieu: Notre-Dame d'Esméville
+2025-05-24 23:49:12 - genealogy_parser - INFO - Terminé: text_normalization - Durée: 0.00s
+2025-05-24 23:49:12 - genealogy_parser - INFO - Terminé: segment_extraction - Durée: 0.00s
+2025-05-24 23:49:12 - genealogy_parser - INFO - Terminé: person_extraction - Durée: 0.02s
+2025-05-24 23:49:12 - genealogy_parser - INFO - DATE NAISSANCE DÉTECTÉE pour Jean Le Boucher: 13 février 1643
+2025-05-24 23:49:12 - genealogy_parser - INFO - DATE NAISSANCE ASSIGNÉE à Jean Le Boucher: 13 février 1643
+2025-05-24 23:49:12 - genealogy_parser - INFO - DATE NAISSANCE DÉTECTÉE pour Françoise Varin: 13 février 1643
+2025-05-24 23:49:12 - genealogy_parser - INFO - DATE NAISSANCE ASSIGNÉE à Françoise Varin: 13 février 1643
+2025-05-24 23:49:12 - genealogy_parser - INFO - Terminé: person_creation - Durée: 0.05s
+2025-05-24 23:49:12 - genealogy_parser - INFO - Traitement de 5 segments pour créer des actes
+2025-05-24 23:49:12 - genealogy_parser - INFO - TYPE ACTE DÉTECTÉ: baptême
+2025-05-24 23:49:12 - genealogy_parser - WARNING - Aucun mapping nom->ID réussi
+2025-05-24 23:49:12 - genealogy_parser - INFO - ACTE CRÉÉ: Type=baptême, Date=, Personnes=0
+2025-05-24 23:49:12 - genealogy_parser - INFO - Avertissements acte 1: ['Acte sans date', 'Baptême sans parents identifiés']
+2025-05-24 23:49:12 - genealogy_parser - INFO - ACTE 1 CRÉÉ avec succès: baptême
+2025-05-24 23:49:12 - genealogy_parser - WARNING - AUCUN TYPE ACTE DÉTECTÉ pour: Charles de Montigny, Guillaume Le Breton, curés....
+2025-05-24 23:49:12 - genealogy_parser - WARNING - Aucun type d'acte détecté pour: Charles de Montigny, Guillaume Le Breton, curés....
+2025-05-24 23:49:12 - genealogy_parser - WARNING - Impossible de créer un acte pour le segment 1
+2025-05-24 23:49:12 - genealogy_parser - WARNING - AUCUN TYPE ACTE DÉTECTÉ pour: « L'an de grâce 1643, le dimanche 8e jour de mars,...
+2025-05-24 23:49:12 - genealogy_parser - WARNING - Aucun type d'acte détecté pour: « L'an de grâce 1643, le dimanche 8e jour de mars,...
+2025-05-24 23:49:12 - genealogy_parser - WARNING - Impossible de créer un acte pour le segment 2
+2025-05-24 23:49:12 - genealogy_parser - INFO - TYPE ACTE DÉTECTÉ: inhumation
+2025-05-24 23:49:12 - genealogy_parser - WARNING - Aucun mapping nom->ID réussi
+2025-05-24 23:49:12 - genealogy_parser - INFO - ACTE CRÉÉ: Type=inhumation, Date=1646, 13 fév, Personnes=0
+2025-05-24 23:49:12 - genealogy_parser - WARNING - Erreurs validation acte 2: ['Inhumation sans défunt identifié']
+2025-05-24 23:49:12 - genealogy_parser - INFO - ACTE 2 CRÉÉ avec succès: inhumation
+2025-05-24 23:49:12 - genealogy_parser - INFO - TYPE ACTE DÉTECTÉ: baptême
+2025-05-24 23:49:12 - genealogy_parser - INFO - FILIATION DÉTECTÉE: Charlotte fille de Jean Le Boucher et Françoise Varin
+2025-05-24 23:49:12 - genealogy_parser - INFO - PARRAIN DÉTECTÉ: Charles Le Boucher
+2025-05-24 23:49:12 - genealogy_parser - INFO - MARRAINE DÉTECTÉE: Perrette Dupré
+2025-05-24 23:49:12 - genealogy_parser - INFO - MARIAGE DÉTECTÉ: de Françoise Picot épouse de Charles Le Boucher
+2025-05-24 23:49:12 - genealogy_parser - INFO - MAPPINGS RÉUSSIS: père: Jean Le Boucher -> ID 3; mère: Françoise Varin -> ID 6; parrain: Charles Le Boucher -> ID 4; marraine: Perrette Dupré -> ID 7; mari: Charles Le Boucher -> ID 4
+2025-05-24 23:49:12 - genealogy_parser - WARNING - NOM NON TROUVÉ: Charlotte (clé: enfant_nom)
+2025-05-24 23:49:12 - genealogy_parser - WARNING - NOM NON TROUVÉ: de Françoise Picot (clé: epouse_nom)
+2025-05-24 23:49:12 - genealogy_parser - INFO - ACTE CRÉÉ: Type=baptême, Date=1651, 23 janv., Personnes=7
+2025-05-24 23:49:12 - genealogy_parser - INFO - ACTE 3 CRÉÉ avec succès: baptême
+2025-05-24 23:49:12 - genealogy_parser - INFO - Nombre total d'actes créés: 3
+2025-05-24 23:49:12 - genealogy_parser - INFO - Terminé: acte_processing - Durée: 0.05s
+2025-05-24 23:49:12 - genealogy_parser - INFO - Terminé: chronology_validation - Durée: 0.00s
+2025-05-24 23:49:12 - genealogy_parser - INFO - Terminé: gender_validation - Durée: 0.00s
+2025-05-24 23:49:12 - genealogy_parser - INFO - Terminé: report_generation - Durée: 0.00s
+2025-05-24 23:49:12 - genealogy_parser - INFO - Traitement terminé avec succès
+2025-05-24 23:49:12 - genealogy_parser - INFO - Terminé: process_document - Durée: 0.15s
+2025-05-24 23:49:12 - genealogy_parser - INFO - Début du traitement - Lieu: Notre-Dame d'Esméville
+2025-05-24 23:49:12 - genealogy_parser - INFO - Terminé: text_normalization - Durée: 0.00s
+2025-05-24 23:49:12 - genealogy_parser - INFO - Terminé: segment_extraction - Durée: 0.00s
+2025-05-24 23:49:12 - genealogy_parser - INFO - Terminé: person_extraction - Durée: 0.00s
+2025-05-24 23:49:12 - genealogy_parser - INFO - DATE NAISSANCE DÉTECTÉE pour Jean Le Boucher: 13 février 1643
+2025-05-24 23:49:12 - genealogy_parser - INFO - DATE NAISSANCE ASSIGNÉE à Jean Le Boucher: 13 février 1643
+2025-05-24 23:49:12 - genealogy_parser - INFO - DATE NAISSANCE DÉTECTÉE pour Françoise Varin: 13 février 1643
+2025-05-24 23:49:12 - genealogy_parser - INFO - DATE NAISSANCE ASSIGNÉE à Françoise Varin: 13 février 1643
+2025-05-24 23:49:12 - genealogy_parser - INFO - Terminé: person_creation - Durée: 0.02s
+2025-05-24 23:49:12 - genealogy_parser - INFO - Traitement de 5 segments pour créer des actes
+2025-05-24 23:49:12 - genealogy_parser - INFO - TYPE ACTE DÉTECTÉ: baptême
+2025-05-24 23:49:12 - genealogy_parser - WARNING - Aucun mapping nom->ID réussi
+2025-05-24 23:49:12 - genealogy_parser - INFO - ACTE CRÉÉ: Type=baptême, Date=, Personnes=0
+2025-05-24 23:49:12 - genealogy_parser - INFO - Avertissements acte 1: ['Acte sans date', 'Baptême sans parents identifiés']
+2025-05-24 23:49:12 - genealogy_parser - INFO - ACTE 1 CRÉÉ avec succès: baptême
+2025-05-24 23:49:12 - genealogy_parser - WARNING - AUCUN TYPE ACTE DÉTECTÉ pour: Charles de Montigny, Guillaume Le Breton, curés....
+2025-05-24 23:49:12 - genealogy_parser - WARNING - Aucun type d'acte détecté pour: Charles de Montigny, Guillaume Le Breton, curés....
+2025-05-24 23:49:12 - genealogy_parser - WARNING - Impossible de créer un acte pour le segment 1
+2025-05-24 23:49:12 - genealogy_parser - WARNING - AUCUN TYPE ACTE DÉTECTÉ pour: « L'an de grâce 1643, le dimanche 8e jour de mars,...
+2025-05-24 23:49:12 - genealogy_parser - WARNING - Aucun type d'acte détecté pour: « L'an de grâce 1643, le dimanche 8e jour de mars,...
+2025-05-24 23:49:12 - genealogy_parser - WARNING - Impossible de créer un acte pour le segment 2
+2025-05-24 23:49:12 - genealogy_parser - INFO - TYPE ACTE DÉTECTÉ: inhumation
+2025-05-24 23:49:12 - genealogy_parser - WARNING - Aucun mapping nom->ID réussi
+2025-05-24 23:49:12 - genealogy_parser - INFO - ACTE CRÉÉ: Type=inhumation, Date=1646, 13 fév, Personnes=0
+2025-05-24 23:49:12 - genealogy_parser - WARNING - Erreurs validation acte 2: ['Inhumation sans défunt identifié']
+2025-05-24 23:49:12 - genealogy_parser - INFO - ACTE 2 CRÉÉ avec succès: inhumation
+2025-05-24 23:49:12 - genealogy_parser - INFO - TYPE ACTE DÉTECTÉ: baptême
+2025-05-24 23:49:12 - genealogy_parser - INFO - FILIATION DÉTECTÉE: Charlotte fille de Jean Le Boucher et Françoise Varin
+2025-05-24 23:49:12 - genealogy_parser - INFO - PARRAIN DÉTECTÉ: Charles Le Boucher
+2025-05-24 23:49:12 - genealogy_parser - INFO - MARRAINE DÉTECTÉE: Perrette Dupré
+2025-05-24 23:49:12 - genealogy_parser - INFO - MARIAGE DÉTECTÉ: de Françoise Picot épouse de Charles Le Boucher
+2025-05-24 23:49:12 - genealogy_parser - INFO - MAPPINGS RÉUSSIS: père: Jean Le Boucher -> ID 3; mère: Françoise Varin -> ID 6; parrain: Charles Le Boucher -> ID 4; marraine: Perrette Dupré -> ID 7; mari: Charles Le Boucher -> ID 4
+2025-05-24 23:49:12 - genealogy_parser - WARNING - NOM NON TROUVÉ: Charlotte (clé: enfant_nom)
+2025-05-24 23:49:12 - genealogy_parser - WARNING - NOM NON TROUVÉ: de Françoise Picot (clé: epouse_nom)
+2025-05-24 23:49:12 - genealogy_parser - INFO - ACTE CRÉÉ: Type=baptême, Date=1651, 23 janv., Personnes=7
+2025-05-24 23:49:12 - genealogy_parser - INFO - ACTE 3 CRÉÉ avec succès: baptême
+2025-05-24 23:49:12 - genealogy_parser - INFO - Nombre total d'actes créés: 3
+2025-05-24 23:49:12 - genealogy_parser - INFO - Terminé: acte_processing - Durée: 0.03s
+2025-05-24 23:49:12 - genealogy_parser - INFO - Terminé: chronology_validation - Durée: 0.00s
+2025-05-24 23:49:12 - genealogy_parser - INFO - Terminé: gender_validation - Durée: 0.00s
+2025-05-24 23:49:12 - genealogy_parser - INFO - Terminé: report_generation - Durée: 0.00s
+2025-05-24 23:49:12 - genealogy_parser - INFO - Traitement terminé avec succès
+2025-05-24 23:49:12 - genealogy_parser - INFO - Terminé: process_document - Durée: 0.07s

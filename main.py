@@ -24,7 +24,7 @@ from utils.logging_config import setup_logging, PerformanceLogger
 from utils.text_utils import TextNormalizer
 
 class GenealogyParser:
-    """Parser généalogique principal avec architecture modulaire complète - VERSION CORRIGÉE"""
+    """Parser généalogique principal avec architecture modulaire complète - VERSION COMPLÈTEMENT CORRIGÉE"""
     
     def __init__(self, config_path: Optional[str] = None):
         # Configuration
@@ -121,7 +121,7 @@ class GenealogyParser:
         return self._report_generator
     
     def process_document(self, text: str, lieu: str = "Notre-Dame d'Esméville") -> Dict:
-        """Traitement complet d'un document avec toutes les optimisations - CORRIGÉ"""
+        """Traitement complet d'un document avec toutes les optimisations - VERSION CORRIGÉE"""
         self.perf_logger.start_timer("process_document")
         self.logger.info(f"Début du traitement - Lieu: {lieu}")
         
@@ -195,20 +195,28 @@ class GenealogyParser:
             raise
     
     def _process_persons(self, persons_data: List[Dict], context: str) -> List[Person]:
-        """CORRIGÉ: Traitement optimisé des personnes avec nettoyage"""
+        """VERSION AMÉLIORÉE: Traitement des personnes avec extraction des dates"""
         created_persons = []
         
         for person_info in persons_data:
             try:
-                # CORRIGÉ: Nettoyer extra_info avant de passer à get_or_create_person
+                # Nettoyer extra_info avant de passer à get_or_create_person
                 clean_extra_info = self._clean_person_info(person_info)
                 clean_extra_info['context'] = context
+                
+                # NOUVEAU: Extraction des dates spécifiques pour cette personne
+                dates_info = self._extract_person_dates(person_info['nom_complet'], context)
+                clean_extra_info.update(dates_info)
                 
                 person = self.person_manager.get_or_create_person(
                     person_info['nom'],
                     person_info['prenom'],
                     clean_extra_info
                 )
+                
+                # NOUVEAU: Mise à jour des dates après création
+                self._update_person_dates(person, dates_info, context)
+                
                 created_persons.append(person)
                 
             except Exception as e:
@@ -217,8 +225,92 @@ class GenealogyParser:
         
         return created_persons
     
+    def _extract_person_dates(self, person_name: str, context: str) -> Dict:
+        """NOUVELLE MÉTHODE: Extrait les dates spécifiques à une personne"""
+        dates_info = {}
+        
+        try:
+            # Rechercher les mentions de cette personne avec des dates
+            person_name_lower = person_name.lower()
+            
+            # 1. Date de décès avec inhumation
+            # Pattern: "13 fév., décès, le 14, inhumation... de Jean Le Boucher"
+            deces_pattern = rf'(\d{{1,2}}\s+\w+\.?),?\s+décès[^,]*,?\s+[^,]*inhumation[^,]*,?\s+de\s+{re.escape(person_name)}'
+            deces_match = re.search(deces_pattern, context, re.IGNORECASE)
+            
+            if deces_match:
+                date_deces = deces_match.group(1)
+                # Ajouter l'année du contexte si disponible
+                year_match = re.search(r'\b(\d{4})\b', context[:deces_match.start()])
+                if year_match:
+                    date_deces = f"{date_deces} {year_match.group(1)}"
+                dates_info['date_deces'] = date_deces
+                self.logger.info(f"DATE DÉCÈS DÉTECTÉE pour {person_name}: {date_deces}")
+            
+            # 2. Date de naissance avec baptême
+            # Pattern: "24 oct., naissance, bapt.... de Charlotte, fille de..."
+            naissance_pattern = rf'(\d{{1,2}}\s+\w+\.?).*?naissance.*?bapt.*?de\s+{re.escape(person_name)}'
+            naissance_match = re.search(naissance_pattern, context, re.IGNORECASE)
+            
+            if not naissance_match:
+                # Pattern alternatif: "Charlotte, fille de..." après une date
+                fille_pattern = rf'(\d{{1,2}}\s+\w+\.?).*?{re.escape(person_name)},\s+fille\s+de'
+                fille_match = re.search(fille_pattern, context, re.IGNORECASE)
+                if fille_match:
+                    naissance_match = fille_match
+            
+            if naissance_match:
+                date_naissance = naissance_match.group(1)
+                # Ajouter l'année du contexte si disponible
+                year_match = re.search(r'\b(\d{4})\b', context[:naissance_match.start()])
+                if year_match:
+                    date_naissance = f"{date_naissance} {year_match.group(1)}"
+                dates_info['date_naissance'] = date_naissance
+                self.logger.info(f"DATE NAISSANCE DÉTECTÉE pour {person_name}: {date_naissance}")
+            
+            # 3. Prise de possession pour les prêtres
+            # Pattern: "L'an de grâce 1643, le dimanche 8e jour de mars, moy, Charles Demontigny"
+            possession_pattern = rf'l\'an\s+de\s+grâce\s+(\d{{4}})[^,]*,\s+[^,]*(\d+e?\s+jour\s+de\s+\w+)[^,]*,\s+[^,]*{re.escape(person_name)}'
+            possession_match = re.search(possession_pattern, context, re.IGNORECASE)
+            
+            if possession_match:
+                annee = possession_match.group(1)
+                jour_mois = possession_match.group(2)
+                date_possession = f"{jour_mois} {annee}"
+                dates_info['date_prise_possession'] = date_possession
+                self.logger.info(f"DATE PRISE POSSESSION DÉTECTÉE pour {person_name}: {date_possession}")
+        
+        except Exception as e:
+            self.logger.warning(f"Erreur extraction dates pour {person_name}: {e}")
+        
+        return dates_info
+    
+    def _update_person_dates(self, person: Person, dates_info: Dict, context: str):
+        """NOUVELLE MÉTHODE: Met à jour les dates d'une personne"""
+        try:
+            # Mettre à jour les dates si elles ne sont pas déjà définies
+            if 'date_naissance' in dates_info and not person.date_naissance:
+                person.date_naissance = dates_info['date_naissance']
+                self.logger.info(f"DATE NAISSANCE ASSIGNÉE à {person.full_name}: {person.date_naissance}")
+            
+            if 'date_deces' in dates_info and not person.date_deces:
+                person.date_deces = dates_info['date_deces']
+                # Si décès détecté, marquer comme non vivant
+                person.est_vivant = False
+                self.logger.info(f"DATE DÉCÈS ASSIGNÉE à {person.full_name}: {person.date_deces}")
+            
+            if 'date_prise_possession' in dates_info:
+                # Pour les prêtres, ajouter une note ou métadonnée
+                if not hasattr(person, 'metadata'):
+                    person.metadata = {}
+                person.metadata['date_prise_possession'] = dates_info['date_prise_possession']
+                self.logger.info(f"DATE PRISE POSSESSION ASSIGNÉE à {person.full_name}: {dates_info['date_prise_possession']}")
+        
+        except Exception as e:
+            self.logger.warning(f"Erreur mise à jour dates pour {person.full_name}: {e}")
+    
     def _clean_person_info(self, person_info: Dict) -> Dict:
-        """NOUVEAU: Nettoie les informations de personne avant traitement"""
+        """Nettoie les informations de personne avant traitement"""
         clean_info = {}
         
         for key, value in person_info.items():
@@ -248,160 +340,269 @@ class GenealogyParser:
         return clean_info
     
     def _process_actes(self, segments: List[Dict], persons: List[Person]) -> List[ActeParoissial]:
-        """CORRIGÉ: Traitement des actes avec extraction des relations"""
+        """VERSION AMÉLIORÉE: Traitement des actes avec logging détaillé"""
         created_actes = []
         
-        for segment in segments:
+        self.logger.info(f"Traitement de {len(segments)} segments pour créer des actes")
+        
+        for i, segment in enumerate(segments):
             if segment['type'] != 'acte':
+                self.logger.debug(f"Segment {i} ignoré (type: {segment['type']})")
                 continue
             
             try:
-                # CORRIGÉ: Analyse du segment pour détecter le type d'acte et relations
+                self.logger.debug(f"Analyse du segment {i}: {segment['content'][:100]}...")
+                
+                # Analyse du segment pour détecter le type d'acte et relations
                 acte_info = self._analyze_segment_for_acte(segment, persons)
                 
                 if acte_info:
+                    # Créer l'acte
                     acte = self.acte_manager.create_acte(acte_info)
                     
-                    # Validation de l'acte
+                    # Validation de l'acte avec logging
                     validation = self.acte_manager.validate_acte(acte, self.person_manager)
+                    if validation.errors:
+                        self.logger.warning(f"Erreurs validation acte {acte.id}: {validation.errors}")
+                    if validation.warnings:
+                        self.logger.info(f"Avertissements acte {acte.id}: {validation.warnings}")
                     
                     created_actes.append(acte)
+                    self.logger.info(f"ACTE {acte.id} CRÉÉ avec succès: {acte.type_acte.value}")
+                else:
+                    self.logger.warning(f"Impossible de créer un acte pour le segment {i}")
                     
             except Exception as e:
-                self.logger.warning(f"Erreur traitement segment: {e}")
+                self.logger.error(f"Erreur traitement segment {i}: {e}")
                 continue
         
+        self.logger.info(f"Nombre total d'actes créés: {len(created_actes)}")
         return created_actes
     
     def _analyze_segment_for_acte(self, segment: Dict, persons: List[Person]) -> Optional[Dict]:
-        """CORRIGÉ: Analyse complète d'un segment avec extraction des relations"""
+        """VERSION AMÉLIORÉE: Analyse complète d'un segment avec extraction des relations et dates"""
         content = segment['content']
         
         # Détecter le type d'acte
         acte_type = self._detect_acte_type(content)
         if not acte_type:
+            self.logger.warning(f"Aucun type d'acte détecté pour: {content[:50]}...")
             return None
         
-        # Extraire les dates
+        # Extraire les dates avec contexte amélioré
         dates = self.date_parser.extract_all_dates(content)
         main_date = dates[0] if dates else None
         
-        # CORRIGÉ: Extraire les relations spécifiques
+        # Extraire l'année du segment pour cohérence
+        year_from_segment = None
+        if segment.get('index', 0) > 0:  # Pas le premier segment (période)
+            # Chercher l'année au début du segment ou dans le contexte précédent
+            year_match = re.search(r'\b(\d{4})\b', content)
+            if year_match:
+                year_from_segment = int(year_match.group(1))
+        
+        # Extraire les relations spécifiques
         person_assignments = self._extract_relations_from_content(content)
+        
+        # Déterminer la date principale basée sur le type d'acte
+        date_str = ""
+        if main_date:
+            date_str = main_date.original_text
+        elif year_from_segment:
+            date_str = str(year_from_segment)
         
         acte_info = {
             'type_acte': acte_type,
-            'date': main_date.original_text if main_date else "",
+            'date': date_str,
             'texte_original': content,
             'person_assignments': person_assignments,
-            'notable': self._is_acte_notable(content)
+            'notable': self._is_acte_notable(content),
+            'year': year_from_segment
         }
         
-        # NOUVEAU: Mapper les noms vers les IDs de personnes
+        # Mapper les noms vers les IDs de personnes
         acte_info = self._map_names_to_person_ids(acte_info, persons)
+        
+        # Logging détaillé pour debug
+        self.logger.info(f"ACTE CRÉÉ: Type={acte_type}, Date={date_str}, Personnes={len(person_assignments)}")
         
         return acte_info
     
     def _extract_relations_from_content(self, content: str) -> Dict:
-        """NOUVEAU: Extraction précise des relations depuis le contenu"""
+        """NOUVELLE VERSION: Extraction précise des relations depuis le contenu"""
         person_assignments = {}
         
         try:
-            # Extraction "Charlotte, fille de Jean Le Boucher... et de Françoise Varin"
-            fille_pattern = r'([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?),\s+fille\s+de\s+([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?)(?:\s*,\s*[^,]*?)?\s+et\s+de\s+([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?)(?:[,;]|$)'
+            # 1. BAPTÊME: "Charlotte, fille de Jean Le Boucher... et de Françoise Varin"
+            fille_pattern = r'([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ]+),\s+fille\s+de\s+([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s,]+?)(?:\s*,\s*[^,]*?)?\s+et\s+de\s+([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?)(?:[,;]|$)'
             fille_match = re.search(fille_pattern, content, re.IGNORECASE)
             
             if fille_match:
                 enfant_nom = fille_match.group(1).strip()
-                pere_nom = fille_match.group(2).strip()
+                pere_desc = fille_match.group(2).strip()
                 mere_nom = fille_match.group(3).strip()
                 
-                person_assignments.update({
-                    'enfant_nom': enfant_nom,
-                    'pere_nom': pere_nom,
-                    'mere_nom': mere_nom
-                })
-            
-            # Extraction "fils de" pattern
-            fils_pattern = r'([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?),\s+fils\s+de\s+([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?)(?:\s+et\s+de\s+([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìínîïðñòóôõö÷øùúûüýþÿ\s]+?))?[,;]'
-            fils_match = re.search(fils_pattern, content, re.IGNORECASE)
-            
-            if fils_match:
-                enfant_nom = fils_match.group(1).strip()
-                pere_nom = fils_match.group(2).strip()
-                mere_nom = fils_match.group(3).strip() if fils_match.group(3) else None
+                # Nettoyer le nom du père des attributs
+                pere_nom = self._clean_name_from_description(pere_desc)
                 
                 person_assignments.update({
                     'enfant_nom': enfant_nom,
                     'pere_nom': pere_nom,
                     'mere_nom': mere_nom
                 })
+                self.logger.info(f"FILIATION DÉTECTÉE: {enfant_nom} fille de {pere_nom} et {mere_nom}")
             
-            # Extraction parrain "parr.: Charles Le Boucher"
-            parrain_pattern = r'parr\.?\s*:\s*([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?)(?:[,;.]|$)'
+            # 2. PATTERN PARRAIN: "parr.: Charles Le Boucher"
+            parrain_pattern = r'parr\.?\s*:\s*([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s,]+?)(?:[,;.]|$)'
             parrain_match = re.search(parrain_pattern, content, re.IGNORECASE)
             
             if parrain_match:
-                person_assignments['parrain_nom'] = parrain_match.group(1).strip()
+                parrain_desc = parrain_match.group(1).strip()
+                parrain_nom = self._clean_name_from_description(parrain_desc)
+                person_assignments['parrain_nom'] = parrain_nom
+                self.logger.info(f"PARRAIN DÉTECTÉ: {parrain_nom}")
             
-            # Extraction marraine "marr.: Perrette Dupré"
+            # 3. PATTERN MARRAINE: "marr.: Perrette Dupré"
             marraine_pattern = r'marr\.?\s*:\s*([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?)(?:[,;.]|$)'
             marraine_match = re.search(marraine_pattern, content, re.IGNORECASE)
             
             if marraine_match:
-                person_assignments['marraine_nom'] = marraine_match.group(1).strip()
+                marraine_nom = marraine_match.group(1).strip()
+                person_assignments['marraine_nom'] = marraine_nom
+                self.logger.info(f"MARRAINE DÉTECTÉE: {marraine_nom}")
             
-            # Extraction épouse "Françoise Picot, épouse de Charles Le Boucher"
-            epouse_pattern = r'([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?),\s+épouse\s+de\s+([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþ ÿ\s]+?)(?:[,;.]|$)'
+            # 4. PATTERN ÉPOUSE: "Françoise Picot, épouse de Charles Le Boucher"
+            epouse_pattern = r'([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?),\s+épouse\s+de\s+([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?)(?:[,;.]|$)'
             epouse_match = re.search(epouse_pattern, content, re.IGNORECASE)
             
             if epouse_match:
-                person_assignments.update({
-                    'epouse_nom': epouse_match.group(1).strip(),
-                    'mari_nom': epouse_match.group(2).strip()
-                })
+                epouse_nom = epouse_match.group(1).strip()
+                mari_desc = epouse_match.group(2).strip()
+                mari_nom = self._clean_name_from_description(mari_desc)
                 
+                person_assignments.update({
+                    'epouse_nom': epouse_nom,
+                    'mari_nom': mari_nom
+                })
+                self.logger.info(f"MARIAGE DÉTECTÉ: {epouse_nom} épouse de {mari_nom}")
+            
+            # 5. PATTERN INHUMATION: "inhumation... de Jean Le Boucher"
+            inhumation_pattern = r'inhumation[^,]*,\s+de\s+([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s,]+?)(?:[,;.]|$)'
+            inhumation_match = re.search(inhumation_pattern, content, re.IGNORECASE)
+            
+            if inhumation_match:
+                defunt_desc = inhumation_match.group(1).strip()
+                defunt_nom = self._clean_name_from_description(defunt_desc)
+                person_assignments['defunt_nom'] = defunt_nom
+                self.logger.info(f"INHUMATION DÉTECTÉE: {defunt_nom}")
+            
+            return person_assignments
+            
         except Exception as e:
             self.logger.warning(f"Erreur extraction relations: {e}")
-        
-        return person_assignments
+            return {}
+    
+    def _clean_name_from_description(self, description: str) -> Optional[str]:
+        """NOUVELLE MÉTHODE: Nettoie un nom des attributs qui l'accompagnent"""
+        try:
+            if not description:
+                return None
+            
+            # Supprimer les attributs courants pour isoler le nom
+            clean_desc = description
+            
+            # Patterns à supprimer (attributs après le nom)
+            patterns_to_remove = [
+                r',\s*écuyer.*$', r',\s*éc\..*$', r',\s*sieur.*$', r',\s*sr\s+de.*$',
+                r',\s*seigneur.*$', r',\s*sgr.*$', r',\s*avocat.*$', r',\s*conseiller.*$',
+                r',\s*curé.*$', r',\s*prêtre.*$', r',\s*avocat\s+du\s+roi.*$', r',\s*notable.*$'
+            ]
+            
+            for pattern in patterns_to_remove:
+                clean_desc = re.sub(pattern, '', clean_desc, flags=re.IGNORECASE)
+            
+            # Nettoyer les espaces et virgules en trop
+            clean_desc = clean_desc.strip().rstrip(',').strip()
+            
+            # Validation finale
+            if len(clean_desc) >= 5 and ' ' in clean_desc:
+                # Vérifier que c'est bien un nom (commence par une majuscule)
+                if re.match(r'^[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß]', clean_desc):
+                    return clean_desc
+            
+            # Si échec, prendre les 2-3 premiers mots comme nom
+            words = clean_desc.split()
+            if len(words) >= 2:
+                name_candidate = ' '.join(words[:3] if len(words) >= 3 else words[:2])
+                if re.match(r'^[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß]', name_candidate):
+                    return name_candidate
+            
+            return None
+            
+        except Exception as e:
+            self.logger.debug(f"Erreur nettoyage nom: {e}")
+            return None
     
     def _map_names_to_person_ids(self, acte_info: Dict, persons: List[Person]) -> Dict:
-        """NOUVEAU: Mappe les noms extraits vers les IDs des personnes"""
+        """VERSION AMÉLIORÉE: Mappe les noms extraits vers les IDs des personnes"""
         person_assignments = acte_info.get('person_assignments', {})
         
         try:
-            # Créer un mapping nom -> personne (insensible à la casse)
+            # Créer un mapping nom -> personne (insensible à la casse et aux variantes)
             name_to_person = {}
+            
             for person in persons:
+                # Mapping exact
                 name_key = person.full_name.lower().strip()
                 name_to_person[name_key] = person
+                
+                # Mapping des variations possibles
+                variations = [
+                    person.full_name.replace(' de ', ' '),  # "Charles de Montigny" -> "Charles Montigny"  
+                    person.full_name.replace('de ', ''),    # "Charles de Montigny" -> "Charles Montigny"
+                    person.full_name.replace(' Le ', ' le '), # Variations de casse
+                ]
+                
+                for variation in variations:
+                    var_key = variation.lower().strip()
+                    if var_key != name_key and var_key not in name_to_person:
+                        name_to_person[var_key] = person
             
-            # Mapper chaque nom vers un ID
+            # Logging pour debug
+            self.logger.debug(f"Mapping créé pour {len(name_to_person)} variations de noms")
+            
+            # Mapper chaque nom vers un ID avec logging
+            mappings_found = []
+            
             if 'enfant_nom' in person_assignments:
                 enfant_name = person_assignments['enfant_nom'].lower().strip()
                 if enfant_name in name_to_person:
                     acte_info['personne_principale_id'] = name_to_person[enfant_name].id
+                    mappings_found.append(f"enfant: {person_assignments['enfant_nom']} -> ID {name_to_person[enfant_name].id}")
             
-            if 'pere_nom' in person_assignments:
+            if 'pere_nom' in person_assignments and person_assignments['pere_nom']:
                 pere_name = person_assignments['pere_nom'].lower().strip()
                 if pere_name in name_to_person:
                     acte_info['pere_id'] = name_to_person[pere_name].id
+                    mappings_found.append(f"père: {person_assignments['pere_nom']} -> ID {name_to_person[pere_name].id}")
             
-            if 'mere_nom' in person_assignments:
+            if 'mere_nom' in person_assignments and person_assignments['mere_nom']:
                 mere_name = person_assignments['mere_nom'].lower().strip()
                 if mere_name in name_to_person:
                     acte_info['mere_id'] = name_to_person[mere_name].id
+                    mappings_found.append(f"mère: {person_assignments['mere_nom']} -> ID {name_to_person[mere_name].id}")
             
-            if 'parrain_nom' in person_assignments:
+            if 'parrain_nom' in person_assignments and person_assignments['parrain_nom']:
                 parrain_name = person_assignments['parrain_nom'].lower().strip()
                 if parrain_name in name_to_person:
                     acte_info['parrain_id'] = name_to_person[parrain_name].id
+                    mappings_found.append(f"parrain: {person_assignments['parrain_nom']} -> ID {name_to_person[parrain_name].id}")
             
-            if 'marraine_nom' in person_assignments:
+            if 'marraine_nom' in person_assignments and person_assignments['marraine_nom']:
                 marraine_name = person_assignments['marraine_nom'].lower().strip()
                 if marraine_name in name_to_person:
                     acte_info['marraine_id'] = name_to_person[marraine_name].id
+                    mappings_found.append(f"marraine: {person_assignments['marraine_nom']} -> ID {name_to_person[marraine_name].id}")
             
             if 'epouse_nom' in person_assignments and 'mari_nom' in person_assignments:
                 epouse_name = person_assignments['epouse_nom'].lower().strip()
@@ -409,34 +610,68 @@ class GenealogyParser:
                 
                 if epouse_name in name_to_person:
                     acte_info['personne_principale_id'] = name_to_person[epouse_name].id
+                    mappings_found.append(f"épouse: {person_assignments['epouse_nom']} -> ID {name_to_person[epouse_name].id}")
+                    
                 if mari_name in name_to_person:
                     acte_info['conjoint_id'] = name_to_person[mari_name].id
-                    
+                    mappings_found.append(f"mari: {person_assignments['mari_nom']} -> ID {name_to_person[mari_name].id}")
+            
+            if 'defunt_nom' in person_assignments and person_assignments['defunt_nom']:
+                defunt_name = person_assignments['defunt_nom'].lower().strip()
+                if defunt_name in name_to_person:
+                    acte_info['personne_principale_id'] = name_to_person[defunt_name].id
+                    mappings_found.append(f"défunt: {person_assignments['defunt_nom']} -> ID {name_to_person[defunt_name].id}")
+            
+            # Log des mappings réussis
+            if mappings_found:
+                self.logger.info(f"MAPPINGS RÉUSSIS: {'; '.join(mappings_found)}")
+            else:
+                self.logger.warning("Aucun mapping nom->ID réussi")
+                
+            # Log des noms non trouvés
+            for key, name in person_assignments.items():
+                if name and key.endswith('_nom'):
+                    name_lower = name.lower().strip()
+                    if name_lower not in name_to_person:
+                        self.logger.warning(f"NOM NON TROUVÉ: {name} (clé: {key})")
+                        
         except Exception as e:
-            self.logger.warning(f"Erreur mapping noms->IDs: {e}")
+            self.logger.error(f"Erreur mapping noms->IDs: {e}")
         
         return acte_info
     
     def _detect_acte_type(self, content: str) -> Optional[str]:
-        """CORRIGÉ: Détection améliorée des types d'actes"""
+        """VERSION AMÉLIORÉE: Détection des types d'actes avec logging"""
         if not content:
             return None
         
         content_lower = content.lower()
         
-        # Priorité aux mots-clés spécifiques
-        if 'prise de possession' in content_lower:
-            return 'prise_possession'
-        elif any(word in content_lower for word in ['baptême', 'bapt.', 'naissance et baptême', 'fille de', 'fils de']):
-            return 'baptême'
-        elif any(word in content_lower for word in ['mariage', 'mar.', 'époux', 'épouse de']):
-            return 'mariage'
-        elif any(word in content_lower for word in ['inhumation', 'inh.', 'décès', 'enterrement']):
-            return 'inhumation'
-        elif 'acte de vente' in content_lower:
-            return 'acte_vente'
+        # Logging pour debug
+        self.logger.debug(f"Détection type acte pour: {content[:100]}...")
         
-        return None
+        detected_type = None
+        
+        # Priorité aux mots-clés spécifiques avec logging
+        if 'prise de possession' in content_lower:
+            detected_type = 'prise_possession'
+        elif any(word in content_lower for word in ['fille de', 'fils de']):
+            detected_type = 'baptême'
+        elif any(word in content_lower for word in ['baptême', 'bapt.', 'naissance et baptême']):
+            detected_type = 'baptême'
+        elif any(word in content_lower for word in ['mariage', 'mar.', 'époux', 'épouse de']):
+            detected_type = 'mariage'
+        elif any(word in content_lower for word in ['inhumation', 'inh.', 'décès', 'enterrement']):
+            detected_type = 'inhumation'
+        elif 'acte de vente' in content_lower:
+            detected_type = 'acte_vente'
+        
+        if detected_type:
+            self.logger.info(f"TYPE ACTE DÉTECTÉ: {detected_type}")
+        else:
+            self.logger.warning(f"AUCUN TYPE ACTE DÉTECTÉ pour: {content[:50]}...")
+        
+        return detected_type
     
     def _is_acte_notable(self, content: str) -> bool:
         """Détermine si l'acte concerne un notable"""
