@@ -2,7 +2,6 @@ import json
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 from collections import defaultdict
-from functools import lru_cache, cached_property
 from itertools import groupby
 
 from core.models import Person, ActeParoissial, ActeType
@@ -11,7 +10,7 @@ from database.acte_manager import ActeManager
 from config.settings import ParserConfig
 
 class ReportGenerator:
-    """Générateur de rapports optimisé avec cache et indexation"""
+    """Générateur de rapports optimisé avec cache manuel et indexation"""
     
     def __init__(self, config: ParserConfig):
         self.config = config
@@ -72,9 +71,12 @@ class ReportGenerator:
             for profession in person.profession:
                 self._indexes['persons_by_profession'][profession].add(person.id)
     
-    @lru_cache(maxsize=256)
     def _analyze_actes_optimized(self, acte_manager: ActeManager) -> Dict:
         """Analyse optimisée des actes avec cache"""
+        cache_key = f"actes_{len(acte_manager.actes)}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+        
         stats = acte_manager.get_statistics()
         
         # Accès direct au lieu de .get() répétés
@@ -89,7 +91,7 @@ class ReportGenerator:
         year_range = stats['year_range']
         periode = f"{year_range[0]}-{year_range[1]}" if year_range[0] else "inconnue"
         
-        return {
+        result = {
             'periode': periode,
             'baptemes': baptemes,
             'mariages': mariages,
@@ -98,6 +100,9 @@ class ReportGenerator:
             'prises_possession': prises_possession,
             'chronologie': self._extract_chronology_optimized(acte_manager)
         }
+        
+        self._cache[cache_key] = result
+        return result
     
     def _analyze_persons_optimized(self, person_manager: PersonManager) -> List[Dict]:
         """Analyse optimisée des personnes avec pre-formatage"""
@@ -181,21 +186,30 @@ class ReportGenerator:
         
         return parrainages
     
-    @lru_cache(maxsize=512)
     def _format_person_dates_cached(self, person: Person) -> str:
         """Formatage des dates avec cache pour éviter les recalculs"""
+        cache_key = f"dates_{person.id}_{person.date_naissance}_{person.date_deces}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+        
         if person.date_naissance and person.date_deces:
-            return f"(*{person.date_naissance}-†{person.date_deces})"
+            result = f"(*{person.date_naissance}-†{person.date_deces})"
         elif person.date_naissance:
-            return f"(*{person.date_naissance}-décès inconnu)"
+            result = f"(*{person.date_naissance}-décès inconnu)"
         elif person.date_deces:
-            return f"(naissance-†{person.date_deces})"
+            result = f"(naissance-†{person.date_deces})"
         else:
-            return "(naissance-décès inconnus)"
+            result = "(naissance-décès inconnus)"
+        
+        self._cache[cache_key] = result
+        return result
     
-    @lru_cache(maxsize=512)
     def _format_person_titles_cached(self, person: Person) -> str:
         """Formatage des titres avec cache"""
+        cache_key = f"titles_{person.id}_{person.statut}_{len(person.terres)}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+        
         titres = []
         
         if person.statut:
@@ -204,26 +218,34 @@ class ReportGenerator:
         if person.terres:
             titres.extend(f"sr de {terre}" for terre in person.terres)
         
-        return ", ".join(titres) if titres else "aucun titre"
+        result = ", ".join(titres) if titres else "aucun titre"
+        self._cache[cache_key] = result
+        return result
     
-    @lru_cache(maxsize=512)
     def _format_person_title_inline_cached(self, person: Person) -> str:
         """Formatage inline avec cache"""
         if not person:
             return ""
         
+        cache_key = f"inline_{person.id}_{person.statut}_{len(person.terres)}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+        
         base_name = person.full_name
         
         if person.statut and person.terres:
             terres_str = ', '.join(person.terres)
-            return f"**{base_name}** ({person.statut.value} sr de {terres_str})"
+            result = f"**{base_name}** ({person.statut.value} sr de {terres_str})"
         elif person.statut:
-            return f"**{base_name}** ({person.statut.value})"
+            result = f"**{base_name}** ({person.statut.value})"
         elif person.terres:
             terres_str = ', '.join(person.terres)
-            return f"**{base_name}** (sr de {terres_str})"
+            result = f"**{base_name}** (sr de {terres_str})"
         else:
-            return f"**{base_name}**"
+            result = f"**{base_name}**"
+        
+        self._cache[cache_key] = result
+        return result
     
     def _determine_notability_optimized(self, person: Person) -> str:
         """Détermination optimisée de la notabilité"""
@@ -245,10 +267,13 @@ class ReportGenerator:
         
         return ", ".join(notabilite_items) if notabilite_items else "aucune notabilité particulière"
     
-    @lru_cache(maxsize=128)
     def _infer_marriage_date_cached(self, couple_key: Tuple[int, int], 
                                   acte_manager: ActeManager) -> str:
         """Inférence de date de mariage avec cache"""
+        cache_key = f"marriage_{couple_key[0]}_{couple_key[1]}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+        
         # Utilisation de compréhension avec générateur pour économiser la mémoire
         children_years = [
             acte.year for acte in acte_manager.actes.values()
@@ -258,9 +283,12 @@ class ReportGenerator:
         
         if children_years:
             earliest_child = min(children_years)
-            return f"*(mariage antérieur à {earliest_child})*"
+            result = f"*(mariage antérieur à {earliest_child})*"
+        else:
+            result = "*(date inconnue)*"
         
-        return "*(date inconnue)*"
+        self._cache[cache_key] = result
+        return result
     
     def _extract_chronology_optimized(self, acte_manager: ActeManager) -> List[str]:
         """Extraction optimisée de la chronologie"""
@@ -282,25 +310,34 @@ class ReportGenerator:
         
         return chronology
     
-    @lru_cache(maxsize=256)
     def _format_acte_chronology_cached(self, acte: ActeParoissial) -> Optional[str]:
         """Formatage d'acte pour chronologie avec cache"""
+        cache_key = f"chrono_{acte.type_acte.value}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+        
         type_mapping = {
             ActeType.PRISE_POSSESSION: "Prise de possession du bénéfice",
             ActeType.INHUMATION: "Inhumation",
             ActeType.BAPTEME: "Naissance et baptême",
             ActeType.MARIAGE: "Mariage"
         }
-        return type_mapping.get(acte.type_acte)
+        
+        result = type_mapping.get(acte.type_acte)
+        self._cache[cache_key] = result
+        return result
     
-    @lru_cache(maxsize=32)
     def _generate_statistics_cached(self, person_manager: PersonManager, 
                                   acte_manager: ActeManager) -> Dict:
         """Génération optimisée des statistiques avec cache"""
+        cache_key = f"stats_{len(person_manager.persons)}_{len(acte_manager.actes)}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+        
         person_stats = person_manager.get_statistics()
         acte_stats = acte_manager.get_statistics()
         
-        return {
+        result = {
             'personnes': person_stats,
             'actes': acte_stats,
             'qualite_donnees': {
@@ -309,6 +346,9 @@ class ReportGenerator:
                 'homonymes_detectes': person_stats.get('homonym_groups', 0)
             }
         }
+        
+        self._cache[cache_key] = result
+        return result
     
     def _count_corrections_optimized(self, person_manager: PersonManager) -> int:
         """Comptage optimisé des corrections"""
@@ -370,8 +410,3 @@ class ReportGenerator:
         """Nettoie les caches pour libérer la mémoire"""
         self._cache.clear()
         self._indexes.clear()
-        # Nettoyer les caches LRU
-        for attr_name in dir(self):
-            attr = getattr(self, attr_name)
-            if hasattr(attr, 'cache_clear'):
-                attr.cache_clear()

@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-Modèles de données corrigés selon les spécifications utilisateur
-Garméa v.0.17.0 - Mise à jour avec prénoms multiples et relations étendues
-"""
-
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict
 from datetime import datetime
@@ -40,7 +34,6 @@ class RelationType(Enum):
 
 @dataclass
 class SourceEvent:
-    """Source documentaire pour un événement spécifique"""
     event_type: str              # "naissance", "mariage", "décès", etc.
     date: Optional[str] = None   # Date de l'événement
     lieu: Optional[str] = None   # Lieu de l'événement
@@ -455,12 +448,9 @@ if __name__ == "__main__":
         if ids:
             print(f"  - {relation_type}: {ids}")
     
-    # Test source manager
     print("\n5. Test source manager:")
     ref = SourceManager.create_source_reference("Creully", "BMS 1665-1701", "1665-1701", 34)
     print(f"Référence créée: {ref}")
-    
     parsed = SourceManager.parse_source_reference(ref)
     print(f"Référence parsée: {parsed}")
-    
-    print("\n✅ Tous les tests passés!")
+    print("\nTous les tests passés!")
