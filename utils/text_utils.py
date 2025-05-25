@@ -130,13 +130,10 @@ class NameUtils:
     
     @staticmethod
     def detect_name_gender_clues(name: str) -> Optional[str]:
-        """Détecte des indices de genre dans un nom"""
         if not name:
             return None
         
         name_lower = name.lower()
-        
-        # Terminaisons féminines communes en français
         feminine_endings = ['ette', 'elle', 'oise', 'ine', 'anne', 'ette']
         masculine_endings = ['ard', 'ert', 'aud', 'oux']
         
@@ -147,5 +144,4 @@ class NameUtils:
         for ending in masculine_endings:
             if name_lower.endswith(ending):
                 return 'M'
-        
         return None

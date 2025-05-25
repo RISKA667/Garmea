@@ -1,2 +1,0 @@
-L'algo doit etre capable d'extraire de n'importe quel acte, les individus, lieux, professions, relations, sujets concernés. Afin, après extraction combiner les pistes etre
-refaire les familles entières, avec une description détaillé et correct de chaque individus qui la compose.

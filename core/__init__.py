@@ -1,5 +1,3 @@
-"""Module core avec les modèles de données"""
-
 from .models import Person, ActeParoissial, ActeType, PersonStatus, ValidationResult
 
 __all__ = [
@@ -7,5 +5,4 @@ __all__ = [
     'ActeParoissial', 
     'ActeType', 
     'PersonStatus', 
-    'ValidationResult'
-]
+    'ValidationResult']
