@@ -597,3 +597,5 @@ if __name__ == "__main__":
         print(f"{key}: {value}")
     
     print("\n✅ Test terminé!")
+
+NameExtractor = EnhancedNameExtractor

@@ -1,6 +1,6 @@
 import re
 from typing import Dict, List, Optional
-from functools import lru_cache
+import hashlib
 
 # Import corrigé
 from config.settings import ParserConfig
@@ -11,6 +11,10 @@ class TextParser:
     def __init__(self, config: ParserConfig):
         self.config = config
         self.abbreviations = config.abbreviations
+        
+        # Cache manuel pour remplacer @lru_cache
+        self._normalize_cache = {}
+        self._cache_max_size = 500
         
         # Compilation des regex pour performance
         self._compile_normalization_patterns()
@@ -25,11 +29,30 @@ class TextParser:
                 r'\b' + escaped_abbrev, re.IGNORECASE
             )
     
-    @lru_cache(maxsize=500)
+    def _create_cache_key(self, text: str) -> str:
+        """Crée une clé de cache pour le texte"""
+        try:
+            return hashlib.md5(text.encode('utf-8')).hexdigest()
+        except Exception:
+            return str(hash(text))
+    
+    def _manage_cache_size(self):
+        """Gère la taille du cache pour éviter une croissance excessive"""
+        if len(self._normalize_cache) > self._cache_max_size:
+            # Supprimer les 100 entrées les plus anciennes (approximation)
+            keys_to_remove = list(self._normalize_cache.keys())[:100]
+            for key in keys_to_remove:
+                self._normalize_cache.pop(key, None)
+    
     def normalize_text(self, text: str) -> str:
-        """Normalisation rapide du texte avec cache"""
+        """Normalisation rapide du texte avec cache manuel"""
         if not text:
             return ""
+        
+        # Vérifier le cache
+        cache_key = self._create_cache_key(text)
+        if cache_key in self._normalize_cache:
+            return self._normalize_cache[cache_key]
         
         normalized = text
         
@@ -40,6 +63,10 @@ class TextParser:
         
         # Nettoyage supplémentaire
         normalized = self._clean_text(normalized)
+        
+        # Mettre en cache
+        self._manage_cache_size()
+        self._normalize_cache[cache_key] = normalized
         
         return normalized
     
@@ -87,3 +114,34 @@ class TextParser:
             })
         
         return segments
+    
+    def clear_cache(self):
+        """Vide le cache pour libérer la mémoire"""
+        self._normalize_cache.clear()
+    
+    def get_cache_stats(self) -> Dict[str, int]:
+        """Retourne les statistiques du cache"""
+        return {
+            'cache_size': len(self._normalize_cache),
+            'cache_max_size': self._cache_max_size,
+            'abbreviations_count': len(self.abbreviations)
+        }
+    
+    def preprocess_large_text(self, text: str, chunk_size: int = 10000) -> List[str]:
+        """Préprocesse de gros textes par chunks pour éviter les problèmes de mémoire"""
+        if len(text) <= chunk_size:
+            return [self.normalize_text(text)]
+        
+        chunks = []
+        for i in range(0, len(text), chunk_size):
+            chunk = text[i:i + chunk_size]
+            # Éviter de couper au milieu des mots
+            if i + chunk_size < len(text):
+                last_space = chunk.rfind(' ')
+                if last_space > chunk_size * 0.8:  # Si on trouve un espace dans les 20% finaux
+                    chunk = chunk[:last_space]
+            
+            normalized_chunk = self.normalize_text(chunk)
+            chunks.append(normalized_chunk)
+        
+        return chunks

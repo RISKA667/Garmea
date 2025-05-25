@@ -1,6 +1,5 @@
 import logging
 from collections import defaultdict
-from functools import lru_cache
 import hashlib
 import json
 from core.models import Person, ValidationResult, PersonStatus
@@ -94,7 +93,13 @@ class PersonManager:
             try:
                 fallback_nom = nom if nom and len(nom) >= 2 else "Inconnu"
                 fallback_prenom = prenom if prenom and len(prenom) >= 2 else "Inconnu"
-                person = Person(id=self.person_id_counter, nom=fallback_nom, prenom=fallback_prenom, confidence_score=0.3)
+                # CORRECTION: Utiliser prenoms au lieu de prenom
+                person = Person(
+                    id=self.person_id_counter, 
+                    nom=fallback_nom, 
+                    prenoms=[fallback_prenom], 
+                    confidence_score=0.3
+                )
                 self.persons[self.person_id_counter] = person
                 self._add_to_index(person)
                 self.person_id_counter += 1
@@ -191,7 +196,10 @@ class PersonManager:
                 if not self._validate_chronological_coherence(person, acte_date):
                     continue
                 try:
-                    similarity_result = self.similarity_engine.calculate_name_similarity(person.nom, person.prenom, nom, prenom)
+                    # CORRECTION: Utiliser primary_prenom
+                    similarity_result = self.similarity_engine.calculate_name_similarity(
+                        person.nom, person.primary_prenom, nom, prenom
+                    )
                     if similarity_result.similarity_score > self.config.similarity_threshold:
                         context_score = self._calculate_context_similarity(person, extra_info)
                         final_score = similarity_result.similarity_score + context_score
@@ -339,7 +347,20 @@ class PersonManager:
             for terre in extra_info.get('terres', []):
                 if terre:
                     terres.append(terre.strip().title())
-            person = Person(id=self.person_id_counter, nom=nom, prenom=prenom, profession=extra_info.get('professions', []), statut=statut, terres=terres, notable=extra_info.get('notable', False), confidence_score=1.0)
+            
+            # CORRECTION: Définir prenoms_list et utiliser prenoms
+            prenoms_list = [prenom] if prenom else []
+            
+            person = Person(
+                id=self.person_id_counter,
+                nom=nom,
+                prenoms=prenoms_list,  # CHANGÉ: prenoms au lieu de prenom
+                profession=extra_info.get('professions', []),
+                statut=statut,
+                terres=terres,
+                notable=extra_info.get('notable', False),
+                confidence_score=1.0
+            )
             self.persons[self.person_id_counter] = person
             self._add_to_index(person)
             self.person_id_counter += 1
@@ -350,7 +371,8 @@ class PersonManager:
 
     def _add_to_index(self, person):
         try:
-            search_key = f"{person.prenom.lower()}_{person.nom.lower()}"
+            # CORRECTION: Utiliser primary_prenom au lieu de prenom
+            search_key = f"{person.primary_prenom.lower()}_{person.nom.lower()}"
             self._name_index[search_key].append(person.id)
         except Exception as e:
             self.logger.warning(f"Erreur ajout index pour {person.full_name}: {e}")
@@ -359,7 +381,8 @@ class PersonManager:
         try:
             keys_to_remove = []
             for cache_key in self._search_cache.keys():
-                if person.nom.lower() in cache_key or person.prenom.lower() in cache_key:
+                # CORRECTION: Utiliser primary_prenom
+                if person.nom.lower() in cache_key or person.primary_prenom.lower() in cache_key:
                     keys_to_remove.append(cache_key)
             for key in keys_to_remove:
                 del self._search_cache[key]
@@ -412,8 +435,9 @@ class PersonManager:
         try:
             for person in self.persons.values():
                 validation_report['total_validated'] += 1
-                if not person.nom or not person.prenom:
-                    validation_report['errors'].append(f"Personne {person.id}: nom ou prénom manquant")
+                # CORRECTION: Vérifier prenoms au lieu de prenom
+                if not person.nom or not person.prenoms:
+                    validation_report['errors'].append(f"Personne {person.id}: nom ou prénoms manquant")
                 if len(person.terres) != len(set(person.terres)):
                     duplicates = [t for t in person.terres if person.terres.count(t) > 1]
                     validation_report['warnings'].append(f"{person.full_name}: terres dupliquées {duplicates}")

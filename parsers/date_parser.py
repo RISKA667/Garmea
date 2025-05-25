@@ -1,10 +1,8 @@
 import re
 from datetime import datetime
 from typing import List, Dict, Optional
-from functools import lru_cache
 from dataclasses import dataclass
-
-# Imports corrigés
+import hashlib
 from config.settings import ParserConfig
 
 @dataclass
@@ -23,6 +21,11 @@ class DateParser:
     
     def __init__(self, config: ParserConfig):
         self.config = config
+        
+        # Cache manuel pour remplacer @lru_cache
+        self._extract_dates_cache = {}
+        self._year_cache = {}
+        self._cache_max_size = 1000
         
         # Mappings français
         self.month_names = {
@@ -64,9 +67,31 @@ class DateParser:
             re.compile(rf'(\d{{1,2}})e?\s+jour\s+de\s+({months_full})', re.IGNORECASE)
         ]
     
-    @lru_cache(maxsize=1000)
+    def _create_cache_key(self, text: str) -> str:
+        """Crée une clé de cache pour le texte"""
+        try:
+            return hashlib.md5(text.encode('utf-8')).hexdigest()
+        except Exception:
+            return str(hash(text))
+    
+    def _manage_cache_size(self, cache_dict: Dict):
+        """Gère la taille du cache pour éviter une croissance excessive"""
+        if len(cache_dict) > self._cache_max_size:
+            # Supprimer les 200 entrées les plus anciennes (approximation)
+            keys_to_remove = list(cache_dict.keys())[:200]
+            for key in keys_to_remove:
+                cache_dict.pop(key, None)
+    
     def extract_all_dates(self, text: str) -> List[ParsedDate]:
-        """Extraction de toutes les dates avec cache"""
+        """Extraction de toutes les dates avec cache manuel"""
+        if not text:
+            return []
+        
+        # Vérifier le cache
+        cache_key = self._create_cache_key(text)
+        if cache_key in self._extract_dates_cache:
+            return self._extract_dates_cache[cache_key]
+        
         dates = []
         found_positions = set()  # Éviter les doublons de position
         
@@ -83,6 +108,11 @@ class DateParser:
         
         # Trier par position dans le texte
         dates.sort(key=lambda d: d.position[0])
+        
+        # Mettre en cache
+        self._manage_cache_size(self._extract_dates_cache)
+        self._extract_dates_cache[cache_key] = dates
+        
         return dates
     
     def _parse_match(self, match: re.Match, pattern_idx: int) -> Optional[ParsedDate]:
@@ -159,7 +189,34 @@ class DateParser:
         return min(valid_dates, key=lambda d: d.parsed_date)
     
     def get_year_from_text(self, text: str) -> Optional[int]:
-        """Extraction rapide d'année pour validation chronologique"""
+        """Extraction rapide d'année pour validation chronologique avec cache manuel"""
+        if not text:
+            return None
+        
+        # Vérifier le cache
+        cache_key = self._create_cache_key(text)
+        if cache_key in self._year_cache:
+            return self._year_cache[cache_key]
+        
         dates = self.extract_all_dates(text)
         years = [d.year for d in dates if d.year and d.confidence > 0.6]
-        return years[0] if years else None
+        result = years[0] if years else None
+        
+        # Mettre en cache
+        self._manage_cache_size(self._year_cache)
+        self._year_cache[cache_key] = result
+        
+        return result
+    
+    def clear_cache(self):
+        """Vide les caches pour libérer la mémoire"""
+        self._extract_dates_cache.clear()
+        self._year_cache.clear()
+    
+    def get_cache_stats(self) -> Dict[str, int]:
+        """Retourne les statistiques des caches"""
+        return {
+            'extract_dates_cache_size': len(self._extract_dates_cache),
+            'year_cache_size': len(self._year_cache),
+            'total_cache_entries': len(self._extract_dates_cache) + len(self._year_cache)
+        }
