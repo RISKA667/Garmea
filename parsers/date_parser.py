@@ -4,6 +4,7 @@ from typing import List, Dict, Optional
 from dataclasses import dataclass
 import hashlib
 from config.settings import ParserConfig
+from functools import lru_cache
 
 @dataclass
 class ParsedDate:

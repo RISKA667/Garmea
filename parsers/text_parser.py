@@ -1,8 +1,7 @@
 import re
 from typing import Dict, List, Optional
 import hashlib
-
-# Import corrigé
+from functools import lru_cache
 from config.settings import ParserConfig
 
 class TextParser:
@@ -11,8 +10,6 @@ class TextParser:
     def __init__(self, config: ParserConfig):
         self.config = config
         self.abbreviations = config.abbreviations
-        
-        # Cache manuel pour remplacer @lru_cache
         self._normalize_cache = {}
         self._cache_max_size = 500
         
@@ -105,14 +102,11 @@ class TextParser:
                 })
                 continue
             
-            # Segments d'actes
             segments.append({
                 'type': 'acte',
                 'content': segment,
                 'index': i,
-                'length': len(segment)
-            })
-        
+                'length': len(segment)})
         return segments
     
     def clear_cache(self):
@@ -143,5 +137,4 @@ class TextParser:
             
             normalized_chunk = self.normalize_text(chunk)
             chunks.append(normalized_chunk)
-        
         return chunks

@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-Name Extractor amélioré pour supporter les prénoms multiples
-et les relations familiales étendues - Garméa v.0.17.0
-"""
-
 import re
 import logging
 from typing import List, Dict, Set, Optional, Tuple
@@ -11,9 +5,7 @@ from functools import lru_cache
 import hashlib
 from config.settings import ParserConfig
 
-class EnhancedNameExtractor:
-    """Extracteur de noms amélioré pour prénoms multiples"""
-    
+class NameExtractor:
     def __init__(self, config: ParserConfig):
         self.config = config
         self.logger = logging.getLogger(__name__)
@@ -552,7 +544,7 @@ if __name__ == "__main__":
     from config.settings import ParserConfig
     
     config = ParserConfig()
-    extractor = EnhancedNameExtractor(config)
+    extractor = NameExtractor(config)
     
     # Test avec prénoms multiples
     test_text = """
@@ -596,6 +588,4 @@ if __name__ == "__main__":
     for key, value in stats.items():
         print(f"{key}: {value}")
     
-    print("\n✅ Test terminé!")
-
-NameExtractor = EnhancedNameExtractor
+    print("\nTest terminé!")

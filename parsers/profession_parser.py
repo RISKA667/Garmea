@@ -3,6 +3,7 @@ import hashlib
 from typing import List, Optional, Dict, Set
 from config.settings import ParserConfig
 from core.models import PersonStatus
+from functools import lru_cache
 
 class ProfessionParser:
     """Parser optimisé pour professions, statuts et terres"""
