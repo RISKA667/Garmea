@@ -1,12 +1,28 @@
-"Garméa" est un prototype logiciel à reconnaissance d'individus dans les divers actes historiques francaise.
+# Garméa
 
-Objectifs : Récupération de tout les individus mentionnés dans un PDF, puis croisement des donnés afin de recréer les relations entre individus.
-L'objectif ultime à terme est de recréer des familles entières pour chacun des individus mentionnés.
+**Garméa** est un prototype logiciel de reconnaissance d'individus dans les actes historiques français, visant à reconstituer automatiquement les relations familiales et généalogiques à partir de documents historiques.
 
-Pour cette reformation d'arbres généalogiques complets et sourcés, le logiciel recroise, analyse, interprete les données accumulés afin de déduire des résultats rigoureux. En s'aidant notamment des relations peres, meres, enfants, cousins, oncles, neveu, freres, soeurs, petit-enfants, parrains, marraines.
+## Objectifs
 
-Toujours en état de prototype, en phase d'entrainement sur textes brutes.
+- **Extraction automatique** des individus mentionnés dans des documents PDF (actes notariés, registres paroissiaux, etc.)
+- **Croisement des données** pour reconstituer les liens familiaux (parenté, alliances, etc.)
+- **Reconstruction d'arbres généalogiques** complets et sourcés, basés sur l'analyse sémantique des relations :
+  - Parents/enfants (père, mère, fils, fille)
+  - Famille élargie (oncles, tantes, cousins, neveux, nièces)
+  - Liens sociaux (parrains, marraines)
+  
+## État actuel
 
-Cette version est disponible uniquement pour de la recherche sous l'Ancien Régime (1540 - av. 1789).
+- **Version :** `0.17.20` (prototype en développement actif)
+- **Phase :** Entraînement sur textes bruts
+- **Période ciblée :** **Ancien Régime** (1540 – avant 1789)  
+  *⚠️ Non adapté aux périodes postérieures pour le moment*
 
-v.0.16.20
+## Fonctionnement
+
+Le logiciel analyse les documents pour :
+1. Identifier les individus et leurs attributs (noms, dates, métiers, etc.)
+2. Interpréter les relations explicites et implicites
+3. Déduire des liens familiaux par inférence logique
+
+*Prototype développé à des fins de recherche historique.*
