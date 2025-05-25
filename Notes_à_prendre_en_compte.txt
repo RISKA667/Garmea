@@ -1,0 +1,42 @@
+Un enfant issu d'un couple légitime (mariage), porte obligatoirement le nom de son père. Ex: Jean de Gramont époux de Madeleine de Cordoue ont un enfant Paul
+, alors ce Paul, sera marqué comme Paul de Gramont par le logiciel.
+
+Liste d'erreurs encore présentes :
+
+- Marguerite de Basly et -> Pourquoi le "et" à la fin ?
+- la même -> Que fait ce résultat dans mes logs ?
+- Marie Leiiueux -> Bug sur le nom
+- (prénom seul): Charlotte -> voir règle plus haute sur la paternalité du nom
+- (prénom seul): Jeanne -> voir règle plus haute sur la paternalité du nom
+- Jacques Hiie -> Probablement Jacques Hue
+- Charlotte Hxie -> Probablement Charlotte Hue
+- Pierre de Vauxnieile -> Bug sur le nom
+- Pierre Dieuavant
+- Anne de La Fo -> Le nom complet a était coupé
+- Jacques Le Liepvre -> Jacques Le Lièvre
+- Jean Prenpain
+
+Quelques corrections :
+
+  'honnête femme Anne Torcapel' → 'Anne Torcapel', mentionné comme honnête femme (notabilité)       
+  'damoiselle iblanci Le Maistre' → 'Blanche le Maistre', mentionné comme damoiselle (notabilité)
+  'Marie Leiiueux' → 'Marie Leiueux(?)'
+  'Cliarles Chalopin' → 'Charles Chalopin'
+  'Heniy Baudart' → 'Henry Baudart'
+  'Hélèner de La Ménardière' → 'Hélène de la Ménardière'
+  'Guillaume Satïrey' → 'Guillaume Saffrey'
+  'Jeanne Desprès' → 'Jeanne Després'
+
+Les particules "de", "du", "des" sont aussi des signes de notabilités, comme l'inhumation dans l'église.
+Les particules "Le" n'est pas forcèment un signe de notabilité.
+
+Sieur n'est pas toujours égal à noblesse et inversement. Seigneur cependant est un titre nobiliaire donc de facto réservé à la noblesse.
+Dame, damoiselle, honnête fille, honorable femme, noble dame, noble damoiselle, noble demoiselle, demoiselle sont des signes de notabilités.
+
+Le but de ce logiciel étant de récupérer absoluement tout les individus cités au moins 1 fois dans les textes comme celui-ci afin d'etre relié, connecter
+à d'autres personnes cités, et ainsi recrée des connexions, familles ou quelconques liens entre eux et faciliter le travail des généalogistes professionnels
+Ce projet à vocations à créer une méga base de données traités et sourcés afin de faire un arbre généalogique de chaque individus cités.
+
+Ecuyer est un titre de noblesse, porté par les gentilhommes. Ceux qui dans leurs actes le mentionné se considérait eux-meme ainsi. Il es important aussi de
+donner le titre de la profession dans son entiereté (Ex: Jacques Guerdon, avocat du roi au siège présidial de Caen = profession : avocat du roi au siège présidial de Caen )
+Et non pas juste "avocat" ou "avocat du roi", cela étant insufisant et imprécis sur la fonction.

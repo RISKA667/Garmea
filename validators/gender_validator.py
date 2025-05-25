@@ -106,7 +106,6 @@ class GenderValidator:
                             f"CORRECTION: Titre '{old_status.value}' supprimé pour "
                             f"{person.full_name} (femme)"
                         )
-        
         return corrections
     
     def infer_gender_from_relations(self, person: Person, all_persons: List[Person], 
@@ -128,5 +127,4 @@ class GenderValidator:
                 return 'M'
             elif rel['type'] == 'marraine' and rel['personne'] == person.full_name:
                 return 'F'
-        
         return None

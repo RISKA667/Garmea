@@ -3,12 +3,9 @@ import logging
 from typing import List, Dict, Set, Optional, Tuple
 from functools import lru_cache
 import hashlib
-
 from config.settings import ParserConfig
 
 class NameExtractor:
-    """Extracteur de noms optimisé avec attribution précise des attributs - VERSION CORRIGÉE"""
-    
     def __init__(self, config: ParserConfig):
         self.config = config
         self.logger = logging.getLogger(__name__)
@@ -50,7 +47,10 @@ class NameExtractor:
                     re.UNICODE
                 ),
                 
-                # Noms avec "du"  
+                ## A ajouter : Noms avec "des" complets
+
+
+                # Noms avec "du" complets
                 re.compile(
                     r'\b([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ]+)\s+'
                     r'(du\s+[A-Za-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ]+)',
@@ -69,7 +69,6 @@ class NameExtractor:
             
         except Exception as e:
             self.logger.error(f"Erreur compilation patterns: {e}")
-            # Fallback pattern simple
             self.name_patterns = [
                 re.compile(r'\b([A-Z][a-z]+)\s+([A-Z][a-z]+)\b')
             ]
