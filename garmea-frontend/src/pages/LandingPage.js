@@ -564,4 +564,4 @@ const AncestorFinder = () => {
   );
 };
 
-export default AncestorFinder;
+export default LandingPage;
