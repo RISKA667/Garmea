@@ -1,0 +1,576 @@
+# ============================================
+# .gitignore pour le Projet Garméa
+# Projet de généalogie avec IA
+# ============================================
+
+# ============================================
+# FICHIERS SENSIBLES ET SÉCURITÉ
+# ============================================
+
+# Variables d'environnement et secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.backup
+.env.*
+
+# Clés et certificats
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+secrets/
+keys/
+certs/
+ssl/
+
+# Fichiers de configuration sensibles
+config/local_settings.py
+config/production_settings.py
+config/secrets.yml
+config/database.yml
+
+# ============================================
+# PYTHON - BACKEND
+# ============================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+pytest.ini
+.testmondata
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff (si utilisé plus tard)
+*.log
+local_settings.py
+db.sqlite3
+
+# Flask stuff (si utilisé)
+instance/
+.webassets-cache
+
+# Scrapy stuff (si utilisé)
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# celery beat schedule file
+celerybeat-schedule
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# ============================================
+# NODE.JS / REACT - FRONTEND
+# ============================================
+
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# Grunt intermediate storage
+.grunt
+
+# Bower dependency directory
+bower_components
+
+# node-waf configuration
+.lock-wscript
+
+# Compiled binary addons
+build/Release
+
+# Dependency directories
+jspm_packages/
+
+# TypeScript v1 declaration files
+typings/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variables file
+.env.test
+
+# parcel-bundler cache
+.cache
+.parcel-cache
+
+# Next.js build output
+.next
+
+# Nuxt.js build / generate output
+.nuxt
+dist
+
+# Gatsby files
+.cache/
+public
+
+# Storybook build outputs
+.out
+.storybook-out
+
+# Rollup.js default build output
+dist/
+
+# Uncomment this line if you wish to ignore the project description file
+# .project
+
+# ============================================
+# BASES DE DONNÉES
+# ============================================
+
+# SQLite
+*.sqlite
+*.sqlite3
+*.db
+
+# PostgreSQL dumps
+*.sql
+*.dump
+
+# MySQL dumps
+*.mysql
+
+# Sauvegardes de base de données
+backup/
+backups/
+*.backup
+*_backup_*
+
+# ============================================
+# LOGS ET MONITORING
+# ============================================
+
+# Logs généraux
+logs/
+*.log
+*.log.*
+log/
+
+# Logs spécifiques à l'application
+garmea.log
+api.log
+error.log
+access.log
+debug.log
+audit.log
+
+# Logs de déploiement
+deploy.log
+migration.log
+
+# Monitoring et métriques
+metrics/
+monitoring/
+.prometheus/
+
+# ============================================
+# DOCKER ET CONTENEURISATION
+# ============================================
+
+# Volumes Docker
+docker-volumes/
+.docker/
+
+# Images Docker locales (tags spécifiques)
+docker-compose.override.yml
+
+# Données persistantes
+postgres_data/
+redis_data/
+uploads_data/
+
+# ============================================
+# FICHIERS DE CACHE ET TEMPORAIRES
+# ============================================
+
+# Cache général
+cache/
+tmp/
+temp/
+.tmp/
+.temp/
+
+# Cache Redis (si persistant)
+dump.rdb
+appendonly.aof
+
+# Cache de l'application
+.cache/
+.garmea_cache/
+
+# Fichiers temporaires système
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ============================================
+# UPLOADS ET FICHIERS UTILISATEUR
+# ============================================
+
+# Répertoires d'upload
+uploads/
+upload/
+media/
+files/
+
+# Fichiers traités
+processed/
+output/
+results/
+
+# Documents PDF temporaires
+*.tmp.pdf
+temp_*.pdf
+
+# Exports générés
+exports/
+generated/
+
+# ============================================
+# IDE ET ÉDITEURS
+# ============================================
+
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# PyCharm
+.idea/
+*.swp
+*.swo
+*~
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*.tmp
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# Atom
+.atom/
+
+# ============================================
+# SYSTÈME ET OS
+# ============================================
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Linux
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ============================================
+# DÉPLOIEMENT ET CI/CD
+# ============================================
+
+# Scripts de déploiement spécifiques
+deploy_local.sh
+deploy_staging.sh
+deploy_prod.sh
+.deploy/
+
+# Artifacts de build
+artifacts/
+releases/
+
+# GitHub Actions secrets
+.github/secrets/
+
+# ============================================
+# DÉVELOPPEMENT ET TESTS
+# ============================================
+
+# Données de test
+test_data/
+test_uploads/
+test_output/
+fixtures/large_files/
+
+# Notebooks Jupyter pour expérimentation
+notebooks/
+*.ipynb
+
+# Profiling
+*.prof
+.profile
+
+# Benchmark résultats
+benchmark_results/
+performance_logs/
+
+# ============================================
+# DOCUMENTATION
+# ============================================
+
+# Documentation générée automatiquement
+docs/build/
+docs/_build/
+site/
+
+# Fichiers de documentation temporaires
+*.aux
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+
+# ============================================
+# APPLICATIONS TIERCES
+# ============================================
+
+# Elasticsearch
+elasticsearch-data/
+
+# Redis (si local)
+redis-data/
+
+# Nginx logs locaux
+nginx-logs/
+
+# Let's Encrypt
+.well-known/
+
+# ============================================
+# FICHIERS SPÉCIFIQUES AU PROJET
+# ============================================
+
+# Modèles ML entraînés (volumineux)
+models/
+*.model
+*.pickle
+*.pkl
+
+# Données d'entraînement
+training_data/
+datasets/
+
+# Cache de parsing
+parsing_cache/
+.parsing_cache/
+
+# Fichiers de configuration de développement local
+local_config.py
+dev_settings.py
+
+# Archives de registres paroissiaux (trop volumineux pour Git)
+archives/
+registres/
+*.archive
+
+# Statistiques et rapports générés
+reports/
+stats/
+
+# ============================================
+# COMMENTAIRES POUR L'ÉQUIPE
+# ============================================
+
+# Pour ajouter un fichier qui serait normalement ignoré :
+# git add -f nom_du_fichier
+
+# Pour voir quels fichiers sont ignorés :
+# git status --ignored
+
+# Pour débugger le .gitignore :
+# git check-ignore -v nom_du_fichier
+
+# ============================================
+# EXCEPTIONS (FICHIERS À INCLURE)
+# ============================================
+
+# Forcer l'inclusion de certains fichiers importants
+!.gitkeep
+!.env.example
+!docker-compose.yml
+!requirements.txt
+!package.json
+
+# Inclure les exemples de configuration
+!config/settings.example.py
+!config/docker.example.yml
+
+# Inclure les scripts de déploiement génériques
+!scripts/deploy.example.sh
+!scripts/setup.example.sh
+
+# Inclure la documentation
+!docs/README.md
+!docs/API.md
+!docs/DEPLOYMENT.md
+
+# ============================================
+# FIN DU FICHIER .gitignore
+# Version: 2.0.0 - Projet Garméa
+# Dernière mise à jour: Décembre 2024
+# ============================================
