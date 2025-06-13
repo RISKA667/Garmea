@@ -7,6 +7,19 @@ from dataclasses import dataclass
 
 @dataclass
 class PageAnalysis:
+    """
+    Classe de données pour stocker les résultats de l'analyse d'une page PDF.
+    
+    Attributs:
+        page_num (int): Numéro de la page analysée
+        score_paroissial (float): Score indiquant la probabilité que la page contienne un registre paroissial
+        langue (str): Langue détectée dans le texte
+        contient_registre (bool): Indique si la page contient un registre paroissial
+        indicateurs_trouvés (List[str]): Liste des motifs trouvés qui ont contribué au score
+        texte_extrait (str): Extrait du texte de la page (limité à 300 caractères)
+        longueur (int): Longueur totale du texte de la page
+        relations_detectees (int): Nombre de relations familiales détectées
+    """
     page_num: int
     score_paroissial: float
     langue: str
@@ -17,12 +30,13 @@ class PageAnalysis:
     relations_detectees: int
 
 class SmartPDFAnalyzer:
-    """Analyseur PDF intelligent optimisé pour registres paroissiaux complets"""
+    """Analyseur PDF optimisé pour la détection de registres paroissiaux historiques."""
     
     def __init__(self):
+        """Initialise l'analyseur avec les motifs de recherche et la configuration."""
         self.logger = logging.getLogger(__name__)
         
-        # Patterns améliorés pour détecter du contenu paroissial français
+        # Patterns pour détecter le contenu paroissial en français
         self.patterns_registres = {
             'actes_paroissiaux': [
                 r'\bbapt[êe]mes?\b', r'\bbaptême\b', r'\bbapt\.\b',
@@ -55,13 +69,13 @@ class SmartPDFAnalyzer:
                 r'\bbénéfice\b', r'\bautel\b', r'\bchœur\b'
             ],
             'structure_registre': [
-                r'—\s*«', r'»\s*—',  # Guillemets typiques des registres
-                r'\d{4}-\d{4}\.\s*—',  # Format période : "1643-1687. —"
+                r'—\s*«', r'»\s*—',  # Guillemets typiques
+                r'\d{4}-\d{4}\.\s*—',  # Format période
                 r'Bapt\.,\s*mar\.,\s*inh\.'  # Abréviations typiques
             ]
         }
         
-        # Patterns négatifs (indiquent que ce n'est PAS un registre)
+        # Patterns pour exclure les pages non pertinentes
         self.patterns_negatifs = [
             r'\buniversity\b', r'\blibrary\b', r'\bdepartment\b',
             r'\beducation\b', r'\bpurchased\b', r'\bfor\s+the\b',
@@ -70,40 +84,43 @@ class SmartPDFAnalyzer:
         ]
     
     def analyser_pdf_complet(self, pdf_path: str, max_pages: int = None) -> Dict:
-        """Analyse complète du PDF pour identifier TOUTES les pages de registres"""
+        """
+        Analyse un fichier PDF complet pour détecter les pages contenant des registres paroissiaux.
         
+        Args:
+            pdf_path (str): Chemin vers le fichier PDF à analyser
+            max_pages (int, optional): Nombre maximum de pages à analyser
+            
+        Returns:
+            Dict: Dictionnaire contenant les résultats de l'analyse
+        """
         try:
-            # Ouvrir le PDF
             doc = fitz.open(pdf_path)
             total_pages = len(doc)
             
             if max_pages:
                 total_pages = min(total_pages, max_pages)
             
-            print(f"📖 Analyse de {total_pages} pages pour détecter les registres paroissiaux...")
+            print(f"Analyse de {total_pages} pages pour détecter les registres paroissiaux...")
             
-            # Analyser chaque page
             analyses = []
             pages_pertinentes = []
             
             for page_num in range(total_pages):
                 if page_num % 50 == 0:
-                    print(f"   Progression: {page_num}/{total_pages} pages analysées...")
+                    print(f"Progression: {page_num}/{total_pages} pages analysées...")
                 
                 page = doc[page_num]
                 texte = page.get_text()
                 
-                # Analyser cette page
                 analyse = self._analyser_page(page_num + 1, texte)
                 analyses.append(analyse)
                 
-                # Si la page contient un registre, l'ajouter
                 if analyse.contient_registre:
                     pages_pertinentes.append(analyse)
             
             doc.close()
             
-            # Résumé de l'analyse
             resultat = {
                 'pdf_path': pdf_path,
                 'total_pages_analysees': total_pages,
@@ -120,8 +137,16 @@ class SmartPDFAnalyzer:
             return {'erreur': str(e)}
     
     def _analyser_page(self, page_num: int, texte: str) -> PageAnalysis:
-        """Analyse une page individuelle avec détection des relations"""
+        """
+        Analyse une page individuelle pour détecter la présence de registres paroissiaux.
         
+        Args:
+            page_num (int): Numéro de la page
+            texte (str): Texte extrait de la page
+            
+        Returns:
+            PageAnalysis: Objet contenant les résultats de l'analyse
+        """
         if not texte or len(texte.strip()) < 50:
             return PageAnalysis(
                 page_num=page_num,
@@ -139,36 +164,36 @@ class SmartPDFAnalyzer:
         score = 0.0
         relations_count = 0
         
-        # Calculer le score positif
+        # Calcul du score basé sur les motifs positifs
         for categorie, patterns in self.patterns_registres.items():
             for pattern in patterns:
                 matches = len(re.findall(pattern, texte_lower))
                 if matches > 0:
                     if categorie == 'actes_paroissiaux':
-                        score += matches * 3.0  # Poids fort
+                        score += matches * 3.0
                     elif categorie == 'relations_familiales':
-                        score += matches * 4.0  # Poids très fort pour relations
+                        score += matches * 4.0
                         relations_count += matches
                     elif categorie == 'dates_historiques':
                         score += matches * 2.0
                     elif categorie == 'structure_registre':
-                        score += matches * 5.0  # Poids très fort
+                        score += matches * 5.0
                     else:
                         score += matches * 1.0
                     
                     indicateurs_trouvés.append(f"{categorie}:{pattern}({matches})")
         
-        # Appliquer les pénalités négatives
+        # Application des pénalités pour motifs négatifs
         for pattern in self.patterns_negatifs:
             matches = len(re.findall(pattern, texte_lower))
             if matches > 0:
                 score -= matches * 2.0
                 indicateurs_trouvés.append(f"NÉGATIF:{pattern}")
         
-        # Détecter la langue
+        # Détection de la langue
         langue = self._detecter_langue(texte_lower)
         if langue != 'français':
-            score *= 0.5  # Pénalité si pas français
+            score *= 0.5
         
         # Bonus pour longueur appropriée
         if 200 <= len(texte) <= 5000:
@@ -176,7 +201,7 @@ class SmartPDFAnalyzer:
         elif len(texte) > 5000:
             score += 2.0
         
-        # Décision : contient un registre ?
+        # Décision finale
         contient_registre = (score >= 4.0 and 
                            langue == 'français' and
                            len(texte.strip()) > 100)
@@ -193,33 +218,43 @@ class SmartPDFAnalyzer:
         )
     
     def _detecter_langue(self, texte: str) -> str:
-        """Détection améliorée de langue française"""
+        """
+        Détecte la langue du texte avec un focus sur le français historique.
         
-        # Mots français très caractéristiques des registres paroissiaux
+        Args:
+            texte (str): Texte à analyser
+            
+        Returns:
+            str: Langue détectée ('français', 'indéterminée')
+        """
         mots_francais_registres = [
             'le', 'la', 'les', 'de', 'du', 'des', 'et', 'dans', 'avec',
             'pour', 'par', 'sur', 'sous', 'sans', 'son', 'sa', 'ses',
             'qui', 'que', 'dont', 'où', 'ont', 'est', 'sont'
         ]
         
-        # Compter les occurrences
         count_francais = sum(len(re.findall(rf'\b{mot}\b', texte)) for mot in mots_francais_registres)
         
-        # Mots anglais typiques
         mots_anglais = ['the', 'and', 'or', 'in', 'on', 'with', 'for', 'of', 'to', 'is', 'are']
         count_anglais = sum(len(re.findall(rf'\b{mot}\b', texte)) for mot in mots_anglais)
         
-        # Phrases latines dans registres
         mots_latin = ['sancti', 'domini', 'anno', 'die', 'mensis']
         count_latin = sum(len(re.findall(rf'\b{mot}\b', texte)) for mot in mots_latin)
         
         if count_francais > max(count_anglais, count_latin) * 1.5:
             return 'français'
-            return 'indéterminée'
+        return 'indéterminée'
     
     def _generer_recommandation(self, pages_pertinentes: List[PageAnalysis]) -> Dict:
-        """Génère une recommandation optimisée pour traiter TOUTES les pages"""
+        """
+        Génère une recommandation d'action basée sur les pages détectées.
         
+        Args:
+            pages_pertinentes (List[PageAnalysis]): Liste des pages détectées
+            
+        Returns:
+            Dict: Dictionnaire contenant la recommandation et les détails
+        """
         if not pages_pertinentes:
             return {
                 'action': 'aucune_page_trouvee',
@@ -227,18 +262,15 @@ class SmartPDFAnalyzer:
                 'pages_suggérées': []
             }
         
-        # Trier par score ET nombre de relations détectées
         pages_triees = sorted(pages_pertinentes, 
                              key=lambda p: (p.score_paroissial, p.relations_detectees), 
                              reverse=True)
         
-        # TRAITER TOUTES LES PAGES au lieu de se limiter à 20
         total_pages = len(pages_pertinentes)
         pages_a_traiter = [p.page_num for p in pages_triees]
         
-        # Limiter seulement si vraiment trop (>500 pages)
         if total_pages > 500:
-            print(f"⚠️ {total_pages} pages détectées, limitation à 500 pour performance")
+            print(f"Attention: {total_pages} pages détectées, limitation à 500 pour performance")
             pages_a_traiter = pages_a_traiter[:500]
         
         return {
@@ -255,41 +287,47 @@ class SmartPDFAnalyzer:
                     'relations': p.relations_detectees,
                     'preview': p.texte_extrait[:100] + "..." if len(p.texte_extrait) > 100 else p.texte_extrait
                 }
-                for p in pages_triees[:10]  # Détails des 10 meilleures
+                for p in pages_triees[:10]
             ]
         }
     
     def extraire_pages_registres(self, pdf_path: str, pages_a_extraire: List[int]) -> str:
-        """Extrait le texte des pages spécifiées avec optimisation mémoire"""
+        """
+        Extrait le texte des pages spécifiées avec optimisation mémoire.
         
+        Args:
+            pdf_path (str): Chemin vers le fichier PDF
+            pages_a_extraire (List[int]): Liste des numéros de pages à extraire
+            
+        Returns:
+            str: Texte concaténé des pages extraites
+        """
         texte_complet = ""
         
         try:
             doc = fitz.open(pdf_path)
             
-            print(f"📝 Extraction de {len(pages_a_extraire)} pages de registres...")
+            print(f"Extraction de {len(pages_a_extraire)} pages de registres...")
             
-            # Traitement par batches pour optimiser la mémoire
             batch_size = 50
             for i in range(0, len(pages_a_extraire), batch_size):
                 batch = pages_a_extraire[i:i+batch_size]
                 
                 for page_num in batch:
                     if page_num <= len(doc):
-                        page = doc[page_num - 1]  # fitz utilise index 0
+                        page = doc[page_num - 1]
                         texte_page = page.get_text()
                         
                         if texte_page.strip():
                             texte_complet += f"\n--- PAGE {page_num} ---\n"
                             texte_complet += texte_page + "\n"
                 
-                # Log progression pour gros volumes
                 if len(pages_a_extraire) > 100 and i % 100 == 0:
-                    print(f"   Progression extraction: {i+batch_size}/{len(pages_a_extraire)} pages")
+                    print(f"Progression extraction: {i+batch_size}/{len(pages_a_extraire)} pages")
             
             doc.close()
             
-            print(f"✅ Extraction terminée: {len(texte_complet):,} caractères")
+            print(f"Extraction terminée: {len(texte_complet):,} caractères")
             return texte_complet
             
         except Exception as e:
@@ -297,25 +335,32 @@ class SmartPDFAnalyzer:
             return ""
 
 def analyser_et_traiter_pdf(pdf_path: str, max_pages_analyse: int = None):
-    """Fonction principale : analyse et traitement automatique COMPLET"""
+    """
+    Fonction principale pour analyser et traiter un fichier PDF complet.
     
-    print(f"🔍 ANALYSE INTELLIGENTE DU PDF")
+    Args:
+        pdf_path (str): Chemin vers le fichier PDF
+        max_pages_analyse (int, optional): Nombre maximum de pages à analyser
+        
+    Returns:
+        Optional[Dict]: Résultats de l'analyse ou None en cas d'erreur
+    """
+    print(f"ANALYSE INTELLIGENTE DU PDF")
     print(f"Fichier: {pdf_path}")
     print("=" * 60)
     
-    # Initialiser l'analyseur
     analyseur = SmartPDFAnalyzer()
     
-    # 1. Analyser le PDF complet
+    # Phase 1: Analyse complète du PDF
     print("Phase 1: Analyse des pages pour détecter les registres...")
     analyse = analyseur.analyser_pdf_complet(pdf_path, max_pages_analyse)
     
     if 'erreur' in analyse:
-        print(f"❌ Erreur: {analyse['erreur']}")
+        print(f"Erreur: {analyse['erreur']}")
         return None
     
-    # 2. Afficher les résultats de l'analyse
-    print(f"\n📊 RÉSULTATS DE L'ANALYSE")
+    # Affichage des résultats
+    print(f"\nRESULTATS DE L'ANALYSE")
     print("=" * 30)
     print(f"Pages analysées: {analyse['total_pages_analysees']}")
     print(f"Pages avec registres: {analyse['pages_avec_registres']}")
@@ -323,64 +368,62 @@ def analyser_et_traiter_pdf(pdf_path: str, max_pages_analyse: int = None):
     recommandation = analyse['recommandation']
     
     if recommandation['action'] == 'aucune_page_trouvee':
-        print(f"❌ {recommandation['message']}")
+        print(f"{recommandation['message']}")
         
-        # Montrer quelques pages d'exemple pour debug
-        print(f"\n🔍 DEBUG - Contenu des premières pages:")
+        # Debug: affichage des premières pages
+        print(f"\nDEBUG - Contenu des premières pages:")
         for i, analysis in enumerate(analyse['toutes_analyses'][:3]):
-            print(f"  Page {analysis.page_num}: Score={analysis.score_paroissial:.1f}, Langue={analysis.langue}")
+            print(f"Page {analysis.page_num}: Score={analysis.score_paroissial:.1f}, Langue={analysis.langue}")
             if analysis.texte_extrait:
-                print(f"    Extrait: {analysis.texte_extrait[:100]}...")
+                print(f"Extrait: {analysis.texte_extrait[:100]}...")
         
         return None
     
-    # 3. Montrer les meilleures pages trouvées
-    print(f"\n✅ {recommandation['message']}")
+    # Affichage des meilleures pages
+    print(f"\n{recommandation['message']}")
     print(f"Meilleur score: {recommandation['meilleur_score']:.1f}")
     print(f"Relations familiales détectées: {recommandation['total_relations']}")
-    print(f"\n🎯 TOP 10 DES MEILLEURES PAGES:")
+    print(f"\nTOP 10 DES MEILLEURES PAGES:")
     
     for detail in recommandation['pages_details']:
-        print(f"  📄 Page {detail['page']}: Score {detail['score']:.1f} ({detail['langue']}) - {detail['relations']} relations")
-        print(f"     Preview: {detail['preview']}")
+        print(f"Page {detail['page']}: Score {detail['score']:.1f} ({detail['langue']}) - {detail['relations']} relations")
+        print(f"Preview: {detail['preview']}")
         print()
     
-    # 4. Traiter TOUTES les pages détectées
+    # Extraction des pages détectées
     pages_a_traiter = recommandation['pages_suggérées']
     
-    print(f"🚀 EXTRACTION ET TRAITEMENT COMPLET")
+    print(f"EXTRACTION ET TRAITEMENT COMPLET")
     print("=" * 40)
-    print(f"Pages à traiter: {len(pages_a_traiter)} (au lieu de 20)")
+    print(f"Pages à traiter: {len(pages_a_traiter)}")
     
-    # 5. Extraire le texte
+    # Extraction du texte
     texte_registres = analyseur.extraire_pages_registres(pdf_path, pages_a_traiter)
     
     if not texte_registres:
-        print("❌ Aucun texte extrait")
+        print("Aucun texte extrait")
         return None
     
-    # 6. Traiter avec le parser généalogique OPTIMISÉ
-    print(f"\n⚙️  TRAITEMENT GÉNÉALOGIQUE COMPLET")
+    # Traitement généalogique
+    print(f"\nTRAITEMENT GENEALOGIQUE COMPLET")
     print("=" * 35)
     
     try:
         from main import GenealogyParser
         from exporters.report_generator import ReportGenerator
         
-        # Configuration optimisée pour gros volumes
         parser = GenealogyParser()
-        parser.config.max_persons = 5000  # Augmenter la limite
-        parser.config.cache_size = 2000   # Cache plus important
+        parser.config.max_persons = 5000
+        parser.config.cache_size = 2000
         
         resultat = parser.process_document(texte_registres, "Archive départementale")
         
-        print(f"\n📋 RÉSULTATS DU PARSING COMPLET")
+        print(f"\nRESULTATS DU PARSING COMPLET")
         print("=" * 30)
         ReportGenerator.print_formatted_results(resultat)
         
-        # Statistiques détaillées
         stats = parser.get_global_statistics()
-        print(f"\n📊 STATISTIQUES FINALES")
+        print(f"\nSTATISTIQUES FINALES")
         print("=" * 25)
         print(f"Pages traitées: {len(pages_a_traiter)}")
         print(f"Personnes identifiées: {stats['persons']['total_persons']}")
@@ -398,7 +441,7 @@ def analyser_et_traiter_pdf(pdf_path: str, max_pages_analyse: int = None):
         }
         
     except Exception as e:
-        print(f"❌ Erreur traitement généalogique: {e}")
+        print(f"Erreur traitement généalogique: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -407,10 +450,10 @@ if __name__ == "__main__":
     import sys
     
     if len(sys.argv) < 2:
-        # Test avec le fichier par défaut
+        # Test avec fichier par défaut
         pdf_file = "inventairesommai03archuoft.pdf"
         if not Path(pdf_file).exists():
-            print("❌ Fichier PDF non trouvé")
+            print("Fichier PDF non trouvé")
             print("Usage: python smart_pdf_analyzer.py <fichier.pdf> [max_pages]")
             sys.exit(1)
     else:
@@ -418,12 +461,12 @@ if __name__ == "__main__":
     
     max_pages = int(sys.argv[2]) if len(sys.argv) > 2 else None
     
-    # Lancer l'analyse intelligente COMPLÈTE
+    # Lancement de l'analyse
     resultat = analyser_et_traiter_pdf(pdf_file, max_pages)
     
     if resultat:
-        print(f"\n🎉 TRAITEMENT COMPLET TERMINÉ AVEC SUCCÈS!")
+        print(f"\nTRAITEMENT COMPLET TERMINE AVEC SUCCES!")
         print(f"Pages de registres trouvées et traitées: {resultat['pages_registres']}")
         print(f"Personnes avec informations complètes: {resultat['statistiques']['persons']['total_persons']}")
     else:
-        print(f"\n❌ Aucun registre paroissial trouvé dans ce document")
+        print(f"\nAucun registre paroissial trouvé dans ce document")

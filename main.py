@@ -29,7 +29,10 @@ except ImportError:
     HAS_PYMUPDF = False
 
 class PDFReader:
+    """Lecteur PDF spécialisé pour les documents généalogiques"""
+    
     def __init__(self):
+        """Initialise le lecteur PDF avec configuration de logging"""
         self.logger = setup_logging().getChild('pdf_reader')
         self.stats = {
             'pages_processed': 0,
@@ -39,16 +42,33 @@ class PDFReader:
         }
     
     def can_read_pdf(self) -> bool:
+        """Vérifie si PyMuPDF est disponible pour lire les PDF"""
         return HAS_PYMUPDF
     
     def get_available_libraries(self) -> List[str]:
+        """Retourne les bibliothèques PDF disponibles"""
         libraries = []
         if HAS_PYMUPDF:
             libraries.append("PyMuPDF")
         return libraries
     
     def read_pdf_file(self, pdf_path: str, max_pages: Optional[int] = None,
-                     page_range: Optional[tuple] = None, method: str = "auto") -> str:
+                     page_range: Optional[tuple] = None) -> str:
+        """
+        Lit un fichier PDF et retourne son contenu textuel
+        
+        Args:
+            pdf_path: Chemin vers le fichier PDF
+            max_pages: Nombre maximum de pages à lire
+            page_range: Tuple (start, end) pour spécifier une plage de pages
+            
+        Returns:
+            str: Contenu textuel du PDF concaténé
+            
+        Raises:
+            FileNotFoundError: Si le fichier n'existe pas
+            ImportError: Si PyMuPDF n'est pas disponible
+        """
         start_time = time.time()
         
         if not Path(pdf_path).exists():
@@ -77,6 +97,17 @@ class PDFReader:
     
     def _read_with_pymupdf(self, pdf_path: str, max_pages: Optional[int], 
                           page_range: Optional[tuple]) -> str:
+        """
+        Implémentation spécifique de la lecture avec PyMuPDF
+        
+        Args:
+            pdf_path: Chemin vers le fichier PDF
+            max_pages: Limite de pages
+            page_range: Plage de pages spécifique
+            
+        Returns:
+            str: Texte concaténé des pages
+        """
         doc = fitz.open(pdf_path)
         total_pages = len(doc)
         self.logger.info(f"Document PDF: {total_pages} pages")
@@ -108,6 +139,17 @@ class PDFReader:
     
     def _get_page_range(self, total_pages: int, max_pages: Optional[int], 
                        page_range: Optional[tuple]) -> tuple:
+        """
+        Calcule la plage de pages à traiter
+        
+        Args:
+            total_pages: Nombre total de pages dans le document
+            max_pages: Limite maximale de pages
+            page_range: Plage spécifique demandée
+            
+        Returns:
+            tuple: (start_page, end_page)
+        """
         if page_range:
             start_page = max(0, page_range[0] - 1)
             end_page = min(total_pages, page_range[1])
@@ -118,6 +160,15 @@ class PDFReader:
         return start_page, end_page
     
     def get_pdf_info(self, pdf_path: str) -> Dict:
+        """
+        Récupère les métadonnées et informations techniques du PDF
+        
+        Args:
+            pdf_path: Chemin vers le fichier PDF
+            
+        Returns:
+            Dict: Dictionnaire d'informations
+        """
         if not HAS_PYMUPDF:
             return {
                 "pages": "Unknown",
@@ -136,6 +187,12 @@ class PDFReader:
         return info
     
     def get_statistics(self) -> Dict:
+        """
+        Retourne les statistiques de lecture
+        
+        Returns:
+            Dict: Métriques de performance
+        """
         stats = self.stats.copy()
         if stats['processing_time'] > 0:
             stats['pages_per_second'] = stats['pages_processed'] / stats['processing_time']
@@ -143,9 +200,15 @@ class PDFReader:
         return stats
 
 class GenealogyParser:
-    """Parser généalogique principal avec support PDF PyMuPDF"""
+    """Parseur principal pour l'analyse généalogique des registres paroissiaux"""
     
     def __init__(self, config_path: Optional[str] = None):
+        """
+        Initialise le parseur avec configuration
+        
+        Args:
+            config_path: Chemin vers un fichier de configuration personnalisé
+        """
         self.config = ParserConfig.from_file(config_path) if config_path else ParserConfig()
         
         self.logger = setup_logging(
@@ -155,7 +218,7 @@ class GenealogyParser:
         )
         self.perf_logger = PerformanceLogger(self.logger)
         
-        # Composants (lazy loading)
+        # Initialisation différée des composants
         self._text_parser = None
         self._name_extractor = None
         self._date_parser = None
@@ -177,66 +240,88 @@ class GenealogyParser:
     
     @property
     def text_parser(self) -> TextParser:
+        """Gestionnaire de parsing textuel (lazy loading)"""
         if self._text_parser is None:
             self._text_parser = TextParser(self.config)
         return self._text_parser
     
     @property
     def name_extractor(self) -> NameExtractor:
+        """Extracteur de noms (lazy loading)"""
         if self._name_extractor is None:
             self._name_extractor = NameExtractor(self.config)
         return self._name_extractor
     
     @property
     def date_parser(self) -> DateParser:
+        """Parseur de dates (lazy loading)"""
         if self._date_parser is None:
             self._date_parser = DateParser(self.config)
         return self._date_parser
     
     @property
     def profession_parser(self) -> ProfessionParser:
+        """Parseur de professions (lazy loading)"""
         if self._profession_parser is None:
             self._profession_parser = ProfessionParser(self.config)
         return self._profession_parser
     
     @property
     def relationship_parser(self) -> RelationshipParser:
+        """Parseur de relations familiales (lazy loading)"""
         if self._relationship_parser is None:
             self._relationship_parser = RelationshipParser(self.config)
         return self._relationship_parser
     
     @property
     def person_manager(self) -> PersonManager:
+        """Gestionnaire de personnes (lazy loading)"""
         if self._person_manager is None:
             self._person_manager = PersonManager(self.config)
         return self._person_manager
     
     @property
     def acte_manager(self) -> ActeManager:
+        """Gestionnaire d'actes (lazy loading)"""
         if self._acte_manager is None:
             self._acte_manager = ActeManager(self.config)
         return self._acte_manager
     
     @property
     def chronology_validator(self) -> ChronologyValidator:
+        """Validateur chronologique (lazy loading)"""
         if self._chronology_validator is None:
             self._chronology_validator = ChronologyValidator(self.config)
         return self._chronology_validator
     
     @property
     def gender_validator(self) -> GenderValidator:
+        """Validateur de genre (lazy loading)"""
         if self._gender_validator is None:
             self._gender_validator = GenderValidator(self.config)
         return self._gender_validator
     
     @property
     def report_generator(self) -> ReportGenerator:
+        """Générateur de rapports (lazy loading)"""
         if self._report_generator is None:
             self._report_generator = ReportGenerator(self.config)
         return self._report_generator
     
     def process_document(self, text: str, lieu: str = "Notre-Dame d'Esméville") -> Dict:
-        """Traitement complet d'un document"""
+        """
+        Traite un document complet et génère un rapport généalogique
+        
+        Args:
+            text: Texte du document à analyser
+            lieu: Lieu de référence pour les actes
+            
+        Returns:
+            Dict: Rapport généalogique structuré
+            
+        Raises:
+            Exception: En cas d'erreur pendant le traitement
+        """
         self.perf_logger.start_timer("process_document")
         self.logger.info(f"Début du traitement - Lieu: {lieu}")
         
@@ -256,12 +341,12 @@ class GenealogyParser:
             persons_data = self.name_extractor.extract_complete_names_with_sources(normalized_text)
             self.perf_logger.end_timer("person_extraction")
             
-            # 4. Création/récupération des personnes avec validation
+            # 4. Création des personnes
             self.perf_logger.start_timer("person_creation")
             created_persons = self._process_persons(persons_data, normalized_text)
             self.perf_logger.end_timer("person_creation")
             
-            # 5. Extraction et création des actes
+            # 5. Traitement des actes
             self.perf_logger.start_timer("acte_processing")
             created_actes = self._process_actes(segments, created_persons)
             self.perf_logger.end_timer("acte_processing")
@@ -286,7 +371,7 @@ class GenealogyParser:
                 self.global_stats['corrections_applied'] += len(gender_corrections)
                 self.perf_logger.end_timer("gender_validation")
             
-            # 8. Génération du rapport final
+            # 8. Génération du rapport
             self.perf_logger.start_timer("report_generation")
             report = self.report_generator.generate_final_report(
                 self.person_manager, 
@@ -295,7 +380,7 @@ class GenealogyParser:
             )
             self.perf_logger.end_timer("report_generation")
             
-            # Mise à jour des statistiques
+            # Mise à jour des stats
             self.global_stats['documents_processed'] += 1
             self.global_stats['total_persons'] = len(self.person_manager.persons)
             self.global_stats['total_actes'] = len(self.acte_manager.actes)
@@ -310,7 +395,16 @@ class GenealogyParser:
             raise
     
     def _process_persons(self, persons_data: List[Dict], context: str) -> List[Person]:
-        """Traitement des personnes avec extraction complète"""
+        """
+        Traite les données des personnes extraites
+        
+        Args:
+            persons_data: Liste de dictionnaires de données personnelles
+            context: Contexte textuel pour référence
+            
+        Returns:
+            List[Person]: Liste d'objets Person créés
+        """
         created_persons = []
         
         for person_info in persons_data:
@@ -333,7 +427,15 @@ class GenealogyParser:
         return created_persons
     
     def _clean_person_info(self, person_info: Dict) -> Dict:
-        """Nettoie les informations de personne avant traitement"""
+        """
+        Nettoie et valide les informations d'une personne
+        
+        Args:
+            person_info: Dictionnaire d'informations brutes
+            
+        Returns:
+            Dict: Données nettoyées et validées
+        """
         clean_info = {}
         
         for key, value in person_info.items():
@@ -358,7 +460,16 @@ class GenealogyParser:
         return clean_info
     
     def _process_actes(self, segments: List[Dict], persons: List[Person]) -> List[ActeParoissial]:
-        """Traitement des actes avec logging détaillé"""
+        """
+        Traite les segments pour en extraire des actes
+        
+        Args:
+            segments: Segments textuels analysés
+            persons: Liste de personnes référencées
+            
+        Returns:
+            List[ActeParoissial]: Actes créés
+        """
         created_actes = []
         
         self.logger.info(f"Traitement de {len(segments)} segments pour créer des actes")
@@ -383,7 +494,16 @@ class GenealogyParser:
         return created_actes
     
     def _analyze_segment_for_acte(self, segment: Dict, persons: List[Person]) -> Optional[Dict]:
-        """Analyse complète d'un segment"""
+        """
+        Analyse un segment pour en extraire les informations d'acte
+        
+        Args:
+            segment: Segment à analyser
+            persons: Personnes référencées
+            
+        Returns:
+            Optional[Dict]: Dictionnaire d'informations ou None si non valide
+        """
         content = segment['content']
         
         acte_type = self._detect_acte_type(content)
@@ -415,7 +535,15 @@ class GenealogyParser:
         return acte_info
     
     def _detect_acte_type(self, content: str) -> Optional[str]:
-        """Détection des types d'actes"""
+        """
+        Détecte le type d'acte à partir du contenu
+        
+        Args:
+            content: Texte à analyser
+            
+        Returns:
+            Optional[str]: Type d'acte ou None si non détecté
+        """
         if not content:
             return None
         
@@ -435,7 +563,15 @@ class GenealogyParser:
         return None
     
     def _is_acte_notable(self, content: str) -> bool:
-        """Détermine si l'acte concerne un notable"""
+        """
+        Détermine si un acte concerne une personne notable
+        
+        Args:
+            content: Texte de l'acte
+            
+        Returns:
+            bool: True si notable, False sinon
+        """
         if not content:
             return False
         
@@ -447,7 +583,12 @@ class GenealogyParser:
         return any(indicator in content_lower for indicator in notable_indicators)
     
     def export_to_gedcom(self, output_path: str):
-        """Export au format GEDCOM"""
+        """
+        Exporte les données au format GEDCOM
+        
+        Args:
+            output_path: Chemin de sortie du fichier
+        """
         try:
             gedcom_exporter = GedcomExporter(self.config)
             gedcom_exporter.export(
@@ -460,6 +601,12 @@ class GenealogyParser:
             self.logger.error(f"Erreur export GEDCOM: {e}")
     
     def export_to_json(self, output_path: str):
+        """
+        Exporte les données au format JSON
+        
+        Args:
+            output_path: Chemin de sortie du fichier
+        """
         try:
             json_exporter = JsonExporter(self.config)
             json_exporter.export(
@@ -472,6 +619,12 @@ class GenealogyParser:
             self.logger.error(f"Erreur export JSON: {e}")
     
     def get_global_statistics(self) -> Dict:
+        """
+        Récupère les statistiques globales du traitement
+        
+        Returns:
+            Dict: Statistiques consolidées
+        """
         try:
             person_stats = self.person_manager.get_statistics()
             acte_stats = self.acte_manager.get_statistics()
@@ -490,6 +643,7 @@ class GenealogyParser:
             return {'error': str(e)}
 
 def main():
+    """Fonction principale du script"""
     parser = argparse.ArgumentParser(description='Parser généalogique pour registres paroissiaux PDF')
     parser.add_argument('input_file', nargs='?', 
                        default=r'C:\Users\Louis\Documents\CodexGenea\inventairesommai03archuoft.pdf',
@@ -605,6 +759,7 @@ def main():
         sys.exit(1)
 
 def demo_usage():
+    """Fonction de démonstration avec exemple de texte"""
     sample_text = """
     1643-1687. — Bapt., mar., inh. — Charles de Montigny, Guillaume Le Breton, curés.
     — « L'an de grâce 1643, le dimanche 8e jour de mars, moy, Charles Demontigny, prestre, 
