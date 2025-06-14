@@ -1,17 +1,41 @@
-# smart_pdf_analyzer.py - VERSION COMPLÈTEMENT CORRIGÉE ET RÉVISÉE
+# smart_pdf_analyzer.py
 """
-Analyseur PDF intelligent avec correction complète du pipeline des relations
-Version 2.0.0 - Fix complet et optimisé
+Analyseur PDF intelligent pour registres paroissiaux - Version Corrigée
+Version 3.0.1 - Code restructuré et optimisé
+
+Corrections apportées:
+- Structure du code réorganisée
+- Élimination des redéfinitions de fonctions
+- Gestion d'erreurs améliorée
+- Imports conditionnels optimisés
+- Performance et cache améliorés
+- Interface utilisateur clarifiée
+
+Auteur: Smart PDF Analyzer Team
+Date: 2025-06-14
 """
 
-import fitz  # PyMuPDF
+import fitz
 import re
 import sys
 import logging
-import types
+import time
+import gc
+import threading
+import json
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Any
-from dataclasses import dataclass
+from typing import Dict, List, Tuple, Optional, Any, Union
+from dataclasses import dataclass, field
+from collections import defaultdict, Counter
+import numpy as np
+from functools import lru_cache, wraps
+
+# Import conditionnel pour l'export CSV
+try:
+    from csv_exporter import exporter_vers_csv
+    CSV_EXPORT_AVAILABLE = True
+except ImportError:
+    CSV_EXPORT_AVAILABLE = False
 
 # Configuration du logging
 logging.basicConfig(
@@ -21,7 +45,7 @@ logging.basicConfig(
 
 @dataclass
 class PageAnalysis:
-    """Analyse d'une page de PDF avec métriques détaillées"""
+    """Analyse détaillée d'une page de PDF"""
     page_number: int
     text_content: str
     person_count: int
@@ -32,14 +56,289 @@ class PageAnalysis:
     preview: str
     parish_indicators_found: int
     word_count: int
+    confidence_metrics: Dict[str, float] = field(default_factory=dict)
+    extracted_entities: Dict[str, List[str]] = field(default_factory=dict)
 
-class SmartPDFAnalyzer:
-    """Analyseur PDF intelligent pour détecter automatiquement les pages de registres paroissiaux"""
+@dataclass
+class RelationshipMatch:
+    """Relation familiale extraite avec métadonnées"""
+    type: str
+    persons: Dict[str, str]
+    confidence: float
+    source_span: Tuple[int, int]
+    context: str
+    page_number: Optional[int] = None
+
+class PerformanceLogger:
+    """Logger de performance pour mesurer les temps d'exécution"""
+    
+    def __init__(self):
+        self.timers = {}
+        self.results = {}
+        self.logger = logging.getLogger(f"{__name__}.performance")
+    
+    def start_timer(self, name: str):
+        """Démarre un timer"""
+        self.timers[name] = time.time()
+    
+    def end_timer(self, name: str) -> float:
+        """Termine un timer et retourne la durée"""
+        if name in self.timers:
+            duration = time.time() - self.timers[name]
+            self.results[name] = duration
+            self.logger.debug(f"Timer {name}: {duration:.2f}s")
+            return duration
+        return 0.0
+    
+    def get_total_time(self, name: str) -> float:
+        """Retourne le temps total pour un timer"""
+        return self.results.get(name, 0.0)
+    
+    def get_all_results(self) -> Dict[str, float]:
+        """Retourne tous les résultats de timing"""
+        return self.results.copy()
+
+class RobustRelationshipParser:
+    """Parser de relations robuste et tolérant aux erreurs OCR"""
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
+        self._setup_patterns()
+        self._cache = {}
+        self.stats = {
+            'total_processed': 0,
+            'relations_found': 0,
+            'pattern_successes': defaultdict(int)
+        }
+    
+    def _setup_patterns(self):
+        """Configure les patterns progressifs pour l'extraction"""
         
-        # Patterns optimisés pour détecter les registres paroissiaux français
+        # Nom très permissif pour OCR dégradé
+        nom = r'[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\'\-\s\.]{1,50}'
+        
+        # Variations OCR courantes
+        fils_vars = r'(?:fils|filz|fls|f1ls|flls)'
+        fille_vars = r'(?:fille|filles|flle|f1lle)'
+        de_vars = r'(?:de|du|des|dé|dc|do|da)'
+        epouse_vars = r'(?:épouse|espouse|cpouse|femme|fame|fcmme)'
+        
+        self.patterns = {
+            # Filiations de base
+            'filiation_fils': re.compile(
+                rf'({nom})\s*[,\.]*\s*{fils_vars}\s+{de_vars}\s+({nom})',
+                re.IGNORECASE | re.MULTILINE
+            ),
+            
+            'filiation_fille': re.compile(
+                rf'({nom})\s*[,\.]*\s*{fille_vars}\s+{de_vars}\s+({nom})',
+                re.IGNORECASE | re.MULTILINE
+            ),
+            
+            'filiation_avec_mere': re.compile(
+                rf'({nom})\s*[,\.]*\s*(?:{fils_vars}|{fille_vars})\s+{de_vars}\s+({nom})\s+et\s+(?:{de_vars}\s+)?({nom})',
+                re.IGNORECASE | re.MULTILINE
+            ),
+            
+            # Mariages
+            'mariage_epouse': re.compile(
+                rf'({nom})\s*[,\.]*\s*{epouse_vars}\s+{de_vars}\s+({nom})',
+                re.IGNORECASE | re.MULTILINE
+            ),
+            
+            'veuvage': re.compile(
+                rf'({nom})\s*[,\.]*\s*veuve?\s+{de_vars}\s+({nom})',
+                re.IGNORECASE | re.MULTILINE
+            ),
+            
+            # Parrainages
+            'parrain': re.compile(
+                rf'(?:parr?(?:ain)?[\.:\s]*|parr?[\.:])\s*({nom})',
+                re.IGNORECASE | re.MULTILINE
+            ),
+            
+            'marraine': re.compile(
+                rf'(?:marr?(?:aine)?[\.:\s]*|marr?[\.:])\s*({nom})',
+                re.IGNORECASE | re.MULTILINE
+            ),
+            
+            # Patterns contextuels
+            'bapteme_context': re.compile(
+                rf'(?:bapt[êe]?me?|bapt\.?|baptisé[e]?)\s+.*?({nom}).*?'
+                rf'(?:parr?[\.:]?\s*({nom}))?.*?'
+                rf'(?:marr?[\.:]?\s*({nom}))?',
+                re.IGNORECASE | re.MULTILINE | re.DOTALL
+            )
+        }
+    
+    @lru_cache(maxsize=1000)
+    def extract_relationships(self, text: str) -> List[Dict]:
+        """Extraction principale des relations avec cache"""
+        if not text or len(text.strip()) < 10:
+            return []
+        
+        # Normalisation du texte
+        normalized_text = self._normalize_text(text)
+        
+        relationships = []
+        used_positions = set()
+        
+        for pattern_name, pattern in self.patterns.items():
+            matches = self._get_non_overlapping_matches(pattern, normalized_text, used_positions)
+            
+            for match in matches:
+                relation = self._parse_relationship_match(pattern_name, match, normalized_text)
+                if relation:
+                    relationships.append(relation)
+                    used_positions.update(range(match.start(), match.end()))
+                    self.stats['pattern_successes'][pattern_name] += 1
+        
+        self.stats['total_processed'] += 1
+        self.stats['relations_found'] += len(relationships)
+        
+        return self._validate_and_clean_relationships(relationships)
+    
+    def _normalize_text(self, text: str) -> str:
+        """Normalise le texte pour améliorer l'extraction"""
+        if not text:
+            return ""
+        
+        # Corrections OCR communes
+        corrections = {
+            r'\bf1ls\b': 'fils',
+            r'\bf1lle\b': 'fille',
+            r'\bflls\b': 'fils',
+            r'\bdc\b': 'de',
+            r'\bdo\b': 'de',
+            r'\bcpouse\b': 'épouse',
+            r'\bfcmme\b': 'femme'
+        }
+        
+        normalized = text
+        for error, correction in corrections.items():
+            normalized = re.sub(error, correction, normalized, flags=re.IGNORECASE)
+        
+        # Normaliser les espaces
+        normalized = re.sub(r'\s+', ' ', normalized)
+        normalized = re.sub(r'[\.;:]+', ',', normalized)
+        
+        return normalized.strip()
+    
+    def _get_non_overlapping_matches(self, pattern, text, used_positions):
+        """Retourne les matches qui ne chevauchent pas avec les positions utilisées"""
+        matches = []
+        for match in pattern.finditer(text):
+            match_range = set(range(match.start(), match.end()))
+            if not match_range.intersection(used_positions):
+                matches.append(match)
+        return matches
+    
+    def _parse_relationship_match(self, pattern_name: str, match, text: str) -> Optional[Dict]:
+        """Parse un match spécifique selon le pattern"""
+        groups = match.groups()
+        
+        try:
+            if 'filiation' in pattern_name:
+                enfant = self._clean_name(groups[0])
+                pere = self._clean_name(groups[1]) if len(groups) > 1 else None
+                mere = self._clean_name(groups[2]) if len(groups) > 2 else None
+                
+                if enfant and pere:
+                    return {
+                        'type': 'filiation',
+                        'enfant': enfant,
+                        'pere': pere,
+                        'mere': mere,
+                        'position': match.span(),
+                        'source_text': match.group(0)[:100]
+                    }
+            
+            elif 'mariage' in pattern_name or 'veuvage' in pattern_name:
+                epouse = self._clean_name(groups[0])
+                epoux = self._clean_name(groups[1])
+                
+                if epouse and epoux:
+                    return {
+                        'type': 'mariage',
+                        'epouse': epouse,
+                        'epoux': epoux,
+                        'statut': 'veuve' if 'veuvage' in pattern_name else 'mariée',
+                        'position': match.span(),
+                        'source_text': match.group(0)[:100]
+                    }
+            
+            elif 'parrain' in pattern_name or 'marraine' in pattern_name:
+                personne = self._clean_name(groups[0])
+                if personne:
+                    return {
+                        'type': 'marraine' if 'marraine' in pattern_name else 'parrain',
+                        'personne': personne,
+                        'position': match.span(),
+                        'source_text': match.group(0)[:50]
+                    }
+                    
+        except Exception as e:
+            self.logger.debug(f"Erreur parsing relation {pattern_name}: {e}")
+        
+        return None
+    
+    @lru_cache(maxsize=500)
+    def _clean_name(self, name: str) -> Optional[str]:
+        """Nettoie un nom extrait"""
+        if not name:
+            return None
+        
+        # Supprimer ponctuation et normaliser
+        clean = re.sub(r'[,\.;:\-]+', ' ', name)
+        clean = re.sub(r'\s+', ' ', clean).strip()
+        
+        # Validations
+        if len(clean) < 2 or len(clean) > 50:
+            return None
+        
+        if not re.search(r'[a-zA-ZàáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞ]', clean):
+            return None
+        
+        return clean
+    
+    def _validate_and_clean_relationships(self, relationships: List[Dict]) -> List[Dict]:
+        """Valide et nettoie les relations"""
+        valid_relations = []
+        
+        for rel in relationships:
+            # Éviter les relations où les noms sont identiques
+            if rel['type'] == 'filiation':
+                if rel.get('enfant') and rel.get('pere'):
+                    if rel['enfant'].lower() != rel['pere'].lower():
+                        valid_relations.append(rel)
+            elif rel['type'] == 'mariage':
+                if rel.get('epouse') and rel.get('epoux'):
+                    if rel['epouse'].lower() != rel['epoux'].lower():
+                        valid_relations.append(rel)
+            else:
+                valid_relations.append(rel)
+        
+        return valid_relations
+
+class PDFManagerUnifie:
+    """Gestionnaire PDF unifié qui évite les ouvertures/fermetures multiples"""
+    
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+        self.document = None
+        self.document_path = None
+        self.lock = threading.Lock()
+        self._page_cache = {}
+        self.stats = {
+            'pages_cached': 0,
+            'cache_hits': 0,
+            'total_extractions': 0,
+            'document_opens': 0
+        }
+        self._setup_patterns()
+    
+    def _setup_patterns(self):
+        """Configure les patterns d'analyse pour registres paroissiaux"""
         self.parish_indicators = [
             r'baptême|bapt\.|baptisé|baptisée|baptiser',
             r'mariage|marié|mariée|épouse|époux|épouser',
@@ -48,288 +347,346 @@ class SmartPDFAnalyzer:
             r'fils\s+de|fille\s+de|filz\s+de',
             r'sieur|sr\.|écuyer|éc\.|seigneur|dame|demoiselle',
             r'curé|vicaire|prêtre|église|paroisse|chapelle',
-            r'né|née|mort|morte|veuf|veuve'
+            r'né|née|mort|morte|veuf|veuve',
+            r'registres?\s+paroissiaux?',
+            r'acte\s+de\s+(?:baptême|mariage|décès)'
         ]
         
-        # Patterns pour noms de personnes français anciens
         self.name_patterns = [
             r'[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ-]+(?:\s+[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ-]+)+',
             r'[A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?'
         ]
         
-        # Patterns pour relations familiales
         self.relationship_patterns = [
             r'fils\s+de|fille\s+de|filz\s+de',
             r'épouse\s+de|femme\s+de|veuve\s+de',
             r'parrain\s*[\.:]|marraine\s*[\.:]',
             r'et\s+de\s+[A-Z][a-z]+\s+[A-Z][a-z]+',
-            r'père\s+et\s+mère|parents',
-            r'frère\s+de|sœur\s+de|neveu\s+de|nièce\s+de'
+            r'père\s+et\s+mère|parents'
         ]
         
-        # Patterns pour dates françaises
         self.date_patterns = [
-            r'\b\d{4}\b',  # Années (1650, 1725, etc.)
+            r'\b\d{4}\b',
             r'\d{1,2}\s+(?:janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)',
-            r'\d{1,2}\s+(?:janv|févr|mars|avr|mai|juin|juil|août|sept|oct|nov|déc)\.?',
-            r'\d{1,2}(?:er|e)?\s+(?:janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)',
+            r'\d{1,2}\s+(?:janv|févr|mars|avr|mai|juin|juil|août|sept|oct|nov|déc)\.?'
         ]
     
-    def analyze_pdf_structure(self, pdf_path: str, max_pages: Optional[int] = None) -> Dict[str, Any]:
-        """
-        Analyse la structure complète du PDF pour identifier les pages de registres
+    def ouvrir_document(self, pdf_path: str) -> bool:
+        """Ouvre le document PDF de manière sécurisée"""
+        with self.lock:
+            try:
+                if self.document is not None:
+                    self.fermer_document()
+                
+                pdf_file = Path(pdf_path)
+                if not pdf_file.exists():
+                    raise FileNotFoundError(f"Fichier PDF non trouvé: {pdf_path}")
+                
+                self.logger.info(f"Ouverture PDF: {pdf_file.name}")
+                
+                self.document = fitz.open(str(pdf_path))
+                if len(self.document) == 0:
+                    raise ValueError("PDF vide ou sans pages")
+                
+                self.document_path = str(pdf_path)
+                self._page_cache.clear()
+                self.stats['document_opens'] += 1
+                
+                self.logger.info(f"PDF ouvert avec succès: {len(self.document)} pages")
+                return True
+                
+            except Exception as e:
+                self.logger.error(f"Erreur ouverture PDF: {e}")
+                self.document = None
+                self.document_path = None
+                return False
+    
+    def fermer_document(self):
+        """Ferme le document de manière sécurisée"""
+        with self.lock:
+            if self.document is not None:
+                try:
+                    self.document.close()
+                    self.logger.info("Document PDF fermé")
+                except Exception as e:
+                    self.logger.warning(f"Erreur fermeture document: {e}")
+                finally:
+                    self.document = None
+                    self.document_path = None
+                    self._page_cache.clear()
+                    gc.collect()
+    
+    def verifier_document_ouvert(self) -> bool:
+        """Vérifie que le document est ouvert et accessible"""
+        try:
+            return (self.document is not None and 
+                    not self.document.is_closed and 
+                    len(self.document) > 0)
+        except:
+            return False
+    
+    def obtenir_texte_page(self, page_number: int) -> str:
+        """Obtient le texte d'une page avec mise en cache"""
+        if not self.verifier_document_ouvert():
+            return ""
         
-        Args:
-            pdf_path: Chemin vers le fichier PDF
-            max_pages: Limite du nombre de pages à analyser (None = toutes)
-            
-        Returns:
-            Dict contenant l'analyse complète du PDF
-        """
-        
-        if not Path(pdf_path).exists():
-            raise FileNotFoundError(f"Fichier PDF non trouvé: {pdf_path}")
+        if page_number in self._page_cache:
+            self.stats['cache_hits'] += 1
+            return self._page_cache[page_number]
         
         try:
-            doc = fitz.open(pdf_path)
-            total_pages = len(doc)
-            
-            if max_pages:
-                total_pages = min(total_pages, max_pages)
-            
-            print(f"📖 Analyse du PDF: {total_pages} pages sur {len(doc)} au total")
-            
-            page_analyses = []
-            
-            # Analyse page par page avec extraction immédiate du texte
-            for page_num in range(total_pages):
-                try:
-                    page = doc[page_num]
-                    # EXTRAIT IMMÉDIATEMENT le texte pour éviter les références au document
-                    text = str(page.get_text())  # Forcer une copie string
-                    
-                    analysis = self._analyze_page_content(page_num + 1, text)
-                    page_analyses.append(analysis)
-                    
-                    # Progress indicator
-                    if (page_num + 1) % 50 == 0 or page_num == total_pages - 1:
-                        print(f"   📄 Analysé {page_num + 1}/{total_pages} pages...")
+            page_index = page_number - 1
+            if 0 <= page_index < len(self.document):
+                page = self.document[page_index]
+                text = page.get_text()
+                text = self._nettoyer_texte_extrait(text)
                 
-                except Exception as e:
-                    self.logger.warning(f"Erreur analyse page {page_num + 1}: {e}")
-                    # Créer une analyse vide pour cette page
-                    empty_analysis = PageAnalysis(
-                        page_number=page_num + 1,
-                        text_content="",
-                        person_count=0,
-                        relationship_count=0,
-                        date_count=0,
-                        quality_score=0.0,
-                        language="unknown",
-                        preview="Erreur lecture page",
-                        parish_indicators_found=0,
-                        word_count=0
-                    )
-                    page_analyses.append(empty_analysis)
-                    continue
-            
-            doc.close()
-            
-            # Analyser les résultats
-            parish_pages = [p for p in page_analyses if p.quality_score > 5.0]
-            total_parish_pages = len(parish_pages)
-            
-            print(f"✅ Analyse terminée: {total_parish_pages} pages de registres détectées sur {len(page_analyses)}")
-            
-            result = {
-                'total_pages_analyzed': len(page_analyses),
-                'total_pages_in_pdf': len(doc) if 'doc' in locals() else total_pages,
-                'parish_pages_count': total_parish_pages,
-                'page_analyses': page_analyses,
-                'recommendations': self._generate_recommendations(page_analyses),
-                'analysis_summary': self._generate_analysis_summary(page_analyses)
-            }
-            
-            return result
-            
+                self._page_cache[page_number] = text
+                self.stats['pages_cached'] += 1
+                self.stats['total_extractions'] += 1
+                
+                return text
+            else:
+                self.logger.warning(f"Page {page_number} hors limites")
+                return ""
+                
         except Exception as e:
-            self.logger.error(f"Erreur critique lors de l'analyse PDF: {e}")
-            raise
+            self.logger.error(f"Erreur extraction page {page_number}: {e}")
+            return ""
     
-    def _analyze_page_content(self, page_num: int, text: str) -> PageAnalysis:
-        """
-        Analyse le contenu d'une page pour déterminer si c'est un registre paroissial
+    def _nettoyer_texte_extrait(self, texte: str) -> str:
+        """Nettoie le texte extrait pour améliorer la qualité"""
+        if not texte:
+            return ""
         
-        Args:
-            page_num: Numéro de la page
-            text: Contenu textuel de la page
-            
-        Returns:
-            PageAnalysis avec toutes les métriques
-        """
+        # Replacements des caractères problématiques
+        replacements = {
+            '\x00': '', '\ufeff': '', '\xa0': ' ',
+            '\u2019': "'", '\u2018': "'", '\u201c': '"', '\u201d': '"',
+            '\u2013': '-', '\u2014': '-', '\u2026': '...'
+        }
         
-        # Forcer une copie string pour éviter les références PyMuPDF
-        text = str(text) if text else ""
+        for ancien, nouveau in replacements.items():
+            texte = texte.replace(ancien, nouveau)
         
-        if not text or len(text.strip()) < 20:
+        # Normaliser les espaces
+        texte = re.sub(r'\s+', ' ', texte)
+        texte = re.sub(r'\n\s*\n', '\n\n', texte)
+        
+        return texte.strip()
+    
+    def analyser_structure_complete(self, max_pages: Optional[int] = None) -> Dict[str, Any]:
+        """Analyse complète de la structure PDF"""
+        if not self.verifier_document_ouvert():
+            return {}
+        
+        start_time = time.time()
+        total_pages = len(self.document)
+        
+        if max_pages:
+            total_pages = min(total_pages, max_pages)
+        
+        self.logger.info(f"Analyse structure PDF: {total_pages} pages")
+        
+        page_analyses = []
+        
+        for page_num in range(1, total_pages + 1):
+            try:
+                text = self.obtenir_texte_page(page_num)
+                if text:
+                    analysis = self._analyser_contenu_page(page_num, text)
+                    page_analyses.append(analysis)
+                
+                if page_num % 25 == 0 or page_num == total_pages:
+                    self.logger.info(f"Analysé {page_num}/{total_pages} pages")
+                    
+            except Exception as e:
+                self.logger.warning(f"Erreur analyse page {page_num}: {e}")
+                continue
+        
+        analysis_time = time.time() - start_time
+        recommandation = self._generer_recommandations(page_analyses)
+        resume = self._generer_resume(page_analyses)
+        
+        self.logger.info(f"Analyse terminée en {analysis_time:.2f}s")
+        
+        return {
+            'total_pages_analyzed': len(page_analyses),
+            'page_analyses': page_analyses,
+            'recommandation': recommandation,
+            'summary': resume,
+            'analysis_time': analysis_time
+        }
+    
+    def extraire_pages_selectionnees(self, page_numbers: List[int]) -> str:
+        """Extrait le texte des pages sélectionnées"""
+        if not self.verifier_document_ouvert() or not page_numbers:
+            return ""
+        
+        self.logger.info(f"Extraction de {len(page_numbers)} pages")
+        
+        combined_text = []
+        extracted_count = 0
+        
+        for page_num in page_numbers:
+            try:
+                text = self.obtenir_texte_page(page_num)
+                if text.strip():
+                    delimiter = f"\n{'='*20} PAGE {page_num} {'='*20}\n"
+                    combined_text.append(delimiter)
+                    combined_text.append(text)
+                    combined_text.append("\n")
+                    extracted_count += 1
+                    
+            except Exception as e:
+                self.logger.error(f"Erreur extraction page {page_num}: {e}")
+                continue
+        
+        final_text = "\n".join(combined_text)
+        self.logger.info(f"Extraction terminée: {extracted_count}/{len(page_numbers)} pages")
+        
+        return final_text
+    
+    def _analyser_contenu_page(self, page_number: int, text_content: str) -> PageAnalysis:
+        """Analyse détaillée du contenu d'une page"""
+        if not text_content:
             return PageAnalysis(
-                page_number=page_num,
-                text_content="",  # Vide pour économiser la mémoire
-                person_count=0,
-                relationship_count=0,
-                date_count=0,
-                quality_score=0.0,
-                language="unknown",
-                preview="",
-                parish_indicators_found=0,
-                word_count=0
+                page_number=page_number, text_content="", person_count=0,
+                relationship_count=0, date_count=0, quality_score=0.0,
+                language="inconnu", preview="", parish_indicators_found=0, word_count=0
             )
         
-        # Normaliser le texte pour l'analyse
-        text_clean = re.sub(r'\s+', ' ', text.strip())
-        word_count = len(text_clean.split())
-        
         # Compter les indicateurs paroissiaux
-        parish_score = 0
-        indicators_found = 0
+        parish_count = 0
         for pattern in self.parish_indicators:
-            matches = len(re.findall(pattern, text, re.IGNORECASE))
-            if matches > 0:
-                indicators_found += 1
-                parish_score += matches * 2  # Poids élevé pour les mots-clés paroissiaux
+            matches = re.findall(pattern, text_content, re.IGNORECASE)
+            parish_count += len(matches)
         
-        # Compter les personnes (noms propres)
-        person_count = 0
+        # Compter les noms de personnes avec déduplication
+        person_matches = set()
         for pattern in self.name_patterns:
-            person_matches = re.findall(pattern, text)
-            person_count += len(set(person_matches))  # Éviter les doublons
+            matches = re.findall(pattern, text_content)
+            for match in matches:
+                clean_name = re.sub(r'\s+', ' ', match.strip())
+                if len(clean_name) > 3:
+                    person_matches.add(clean_name.lower())
+        person_count = len(person_matches)
         
         # Compter les relations familiales
         relationship_count = 0
         for pattern in self.relationship_patterns:
-            relationship_count += len(re.findall(pattern, text, re.IGNORECASE))
+            matches = re.findall(pattern, text_content, re.IGNORECASE)
+            relationship_count += len(matches)
         
         # Compter les dates
         date_count = 0
         for pattern in self.date_patterns:
-            date_count += len(re.findall(pattern, text, re.IGNORECASE))
-        
-        # Calcul du score de qualité (pondéré)
-        quality_score = (
-            parish_score * 2.0 +           # Indicateurs paroissiaux (poids fort)
-            person_count * 0.8 +           # Nombre de personnes
-            relationship_count * 3.0 +     # Relations familiales (poids très fort)
-            date_count * 1.0 +             # Dates
-            min(word_count / 50, 10) * 0.5 # Bonus pour texte substantiel (plafonné)
-        )
+            matches = re.findall(pattern, text_content, re.IGNORECASE)
+            date_count += len(matches)
         
         # Détecter la langue
-        french_indicators = [
-            r'\bde\b', r'\ble\b', r'\bla\b', r'\bdu\b', r'\bdes\b', 
-            r'\bet\b', r'\bdans\b', r'\béglise\b', r'\bpar\b', r'\bce\b'
-        ]
-        french_count = sum(len(re.findall(pattern, text, re.IGNORECASE)) for pattern in french_indicators)
-        language = "français" if french_count > 3 else "autre"
+        french_words = ['de', 'le', 'la', 'du', 'des', 'et', 'dans', 'avec']
+        french_score = sum(1 for word in french_words if word in text_content.lower())
+        language = "français" if french_score >= 3 else "autre"
         
-        # Générer prévisualisation intelligente
-        preview = self._generate_smart_preview(text_clean)
+        # Calculer le score de qualité
+        word_count = len(text_content.split())
+        quality_score = (
+            parish_count * 3.0 +
+            relationship_count * 2.5 +
+            date_count * 1.5 +
+            person_count * 0.8 +
+            (2.0 if language == "français" else 0.5)
+        )
+        
+        # Bonus pour diversité et contenu substantiel
+        if word_count > 50:
+            quality_score += 0.5
+        if parish_count == 0 and relationship_count == 0:
+            quality_score -= 2.0
+        
+        quality_score = max(0.0, quality_score)
+        
+        # Preview du contenu
+        preview_lines = text_content.split('\n')[:3]
+        preview = ' '.join(preview_lines).replace('\r', ' ')
+        preview = re.sub(r'\s+', ' ', preview)[:150]
         
         return PageAnalysis(
-            page_number=page_num,
-            text_content="",  # NE PAS stocker le texte complet pour éviter les fuites mémoire
+            page_number=page_number,
+            text_content=text_content,
             person_count=person_count,
             relationship_count=relationship_count,
             date_count=date_count,
             quality_score=quality_score,
             language=language,
             preview=preview,
-            parish_indicators_found=indicators_found,
+            parish_indicators_found=parish_count,
             word_count=word_count
         )
     
-    def _generate_smart_preview(self, text: str) -> str:
-        """Génère une prévisualisation intelligente du contenu"""
-        if len(text) <= 150:
-            return text.replace('\n', ' ')
+    def _generer_recommandations(self, page_analyses: List[PageAnalysis]) -> Dict:
+        """Génère des recommandations basées sur l'analyse"""
+        if not page_analyses:
+            return {'pages_suggerees': [], 'confiance': 0.0}
         
-        # Chercher des phrases avec indicateurs paroissiaux
-        sentences = re.split(r'[.;!?]', text)
-        for sentence in sentences:
-            if any(re.search(pattern, sentence, re.IGNORECASE) for pattern in self.parish_indicators[:4]):
-                preview = sentence.strip()[:150]
-                if preview:
-                    return preview + "..."
+        pages_avec_contenu = [p for p in page_analyses if p.word_count > 10]
+        if not pages_avec_contenu:
+            return {'pages_suggerees': [], 'confiance': 0.0}
         
-        # Fallback: début du texte
-        return text[:150].replace('\n', ' ') + "..."
-    
-    def _generate_recommendations(self, page_analyses: List[PageAnalysis]) -> Dict[str, Any]:
-        """
-        Génère des recommandations d'extraction basées sur l'analyse
+        pages_triees = sorted(pages_avec_contenu, key=lambda p: p.quality_score, reverse=True)
         
-        Args:
-            page_analyses: Liste des analyses de pages
-            
-        Returns:
-            Dict avec recommandations et statistiques
-        """
+        scores = [p.quality_score for p in pages_triees]
+        score_max = max(scores)
+        score_moyen = sum(scores) / len(scores)
         
-        # Trier par score de qualité
-        sorted_pages = sorted(page_analyses, key=lambda x: x.quality_score, reverse=True)
-        
-        # Pages recommandées avec seuil adaptatif
-        high_quality_pages = [p for p in sorted_pages if p.quality_score > 10.0]
-        medium_quality_pages = [p for p in sorted_pages if 5.0 < p.quality_score <= 10.0]
-        
-        if high_quality_pages:
-            recommended_pages = [p.page_number for p in high_quality_pages]
-        elif medium_quality_pages:
-            # Si pas de pages haute qualité, prendre les meilleures moyennes
-            recommended_pages = [p.page_number for p in medium_quality_pages[:20]]
+        if score_max > 10:
+            seuil_qualite = max(4.0, score_moyen * 0.6)
+        elif score_max > 5:
+            seuil_qualite = max(2.5, score_moyen * 0.5)
         else:
-            # Dernier recours: les 10 meilleures pages
-            recommended_pages = [p.page_number for p in sorted_pages[:10] if p.quality_score > 1.0]
+            seuil_qualite = max(1.0, score_moyen * 0.3)
         
-        # Statistiques détaillées
-        total_relationships = sum(p.relationship_count for p in page_analyses)
-        total_persons = sum(p.person_count for p in page_analyses)
-        total_dates = sum(p.date_count for p in page_analyses)
-        best_score = sorted_pages[0].quality_score if sorted_pages else 0
+        pages_recommendees = [
+            p for p in pages_triees 
+            if (p.quality_score >= seuil_qualite and 
+                p.parish_indicators_found > 0 and
+                p.language in ['français', 'latin'])
+        ]
         
-        # Détails des meilleures pages
-        top_pages = sorted_pages[:15]  # Top 15 pour plus de détails
-        pages_details = []
+        if len(pages_recommendees) < 3:
+            pages_recommendees = [
+                p for p in pages_triees 
+                if p.quality_score >= seuil_qualite * 0.7 and p.word_count > 20
+            ]
         
-        for page in top_pages:
-            pages_details.append({
+        confiance = 0.0
+        if pages_recommendees:
+            confiance = min(100.0, 
+                          (len(pages_recommendees) / len(pages_avec_contenu)) * 100 * 
+                          (sum(p.quality_score for p in pages_recommendees[:5]) / 
+                           (5 * max(1, score_max))))
+        
+        details_pages = []
+        for page in pages_recommendees[:15]:
+            details_pages.append({
                 'page': page.page_number,
-                'score': round(page.quality_score, 2),
+                'score': round(page.quality_score, 1),
                 'relations': page.relationship_count,
                 'personnes': page.person_count,
                 'dates': page.date_count,
-                'indicateurs': page.parish_indicators_found,
-                'mots': page.word_count,
                 'langue': page.language,
-                'preview': page.preview
+                'preview': page.preview[:80] + "..." if len(page.preview) > 80 else page.preview
             })
         
         return {
-            'pages_suggerees': recommended_pages,
-            'total_relations': total_relationships,
-            'total_personnes': total_persons,
-            'total_dates': total_dates,
-            'meilleur_score': best_score,
-            'pages_details': pages_details,
-            'qualite_distribution': {
-                'excellente': len([p for p in page_analyses if p.quality_score > 15.0]),
-                'bonne': len([p for p in page_analyses if 10.0 < p.quality_score <= 15.0]),
-                'moyenne': len([p for p in page_analyses if 5.0 < p.quality_score <= 10.0]),
-                'faible': len([p for p in page_analyses if 1.0 < p.quality_score <= 5.0]),
-                'nulle': len([p for p in page_analyses if p.quality_score <= 1.0])
-            }
+            'pages_suggerees': [p.page_number for p in pages_recommendees],
+            'confiance': round(confiance, 1),
+            'seuil_utilise': round(seuil_qualite, 1),
+            'details_pages': details_pages
         }
     
-    def _generate_analysis_summary(self, page_analyses: List[PageAnalysis]) -> Dict[str, Any]:
+    def _generer_resume(self, page_analyses: List[PageAnalysis]) -> Dict:
         """Génère un résumé de l'analyse"""
         if not page_analyses:
             return {}
@@ -345,743 +702,541 @@ class SmartPDFAnalyzer:
             'pages_prometteuses': len([p for p in page_analyses if p.quality_score > 5.0])
         }
     
-    def extraire_pages_registres(self, pdf_path: str, page_numbers: List[int]) -> str:
+    def obtenir_statistiques(self) -> Dict:
+        """Retourne les statistiques du gestionnaire"""
+        stats = self.stats.copy()
+        stats['document_ouvert'] = self.verifier_document_ouvert()
+        stats['pages_en_cache'] = len(self._page_cache)
+        
+        if stats['total_extractions'] > 0:
+            stats['taux_cache_hit'] = round(
+                (stats['cache_hits'] / stats['total_extractions']) * 100, 1
+            )
+        else:
+            stats['taux_cache_hit'] = 0.0
+        
+        return stats
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.fermer_document()
+
+class SmartPDFAnalyzer:
+    """Analyseur PDF intelligent pour registres paroissiaux - Version corrigée"""
+    
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+        self.performance_logger = PerformanceLogger()
+        self.relationship_parser = RobustRelationshipParser()
+        
+        # Statistiques globales
+        self.global_stats = {
+            'documents_processed': 0,
+            'total_pages_analyzed': 0,
+            'total_relations_found': 0,
+            'processing_time_total': 0.0
+        }
+        
+        self.logger.info("SmartPDFAnalyzer initialisé")
+    
+    def analyser_et_traiter_pdf(self, pdf_file: str, max_pages: Optional[int] = None) -> Optional[Dict]:
         """
-        Extrait le texte des pages de registres spécifiées
+        Analyse et traite un PDF avec gestion unifiée du document
         
         Args:
-            pdf_path: Chemin vers le PDF
-            page_numbers: Liste des numéros de pages à extraire
+            pdf_file: Chemin vers le fichier PDF
+            max_pages: Nombre maximum de pages à analyser
             
         Returns:
-            Texte combiné de toutes les pages
+            Dict contenant les résultats de l'analyse ou None en cas d'erreur
         """
         
-        if not page_numbers:
-            self.logger.warning("Aucune page spécifiée pour extraction")
-            return ""
+        pdf_path = Path(pdf_file)
         
-        # Vérifier que le fichier existe encore
-        if not Path(pdf_path).exists():
-            self.logger.error(f"Fichier PDF non trouvé lors de l'extraction: {pdf_path}")
-            return ""
-        
-        doc = None
-        try:
-            doc = fitz.open(pdf_path)
-            combined_text = []
-            
-            print(f"📄 Extraction de {len(page_numbers)} pages...")
-            
-            extracted_count = 0
-            for page_num in page_numbers:
-                try:
-                    if 1 <= page_num <= len(doc):
-                        page = doc[page_num - 1]  # fitz utilise un index base 0
-                        text = page.get_text()
-                        
-                        if text.strip():
-                            # Ajouter délimiteur de page pour traçabilité
-                            combined_text.append(f"\n{'='*20} PAGE {page_num} {'='*20}\n{text}\n")
-                            extracted_count += 1
-                        else:
-                            self.logger.warning(f"Page {page_num} vide ou illisible")
-                    else:
-                        self.logger.warning(f"Page {page_num} hors limites (PDF a {len(doc)} pages)")
-                        
-                except Exception as e:
-                    self.logger.error(f"Erreur extraction page {page_num}: {e}")
-                    continue
-            
-            final_text = "\n".join(combined_text)
-            print(f"✅ Extraction réussie: {extracted_count}/{len(page_numbers)} pages, {len(final_text)} caractères")
-            
-            return final_text
-            
-        except Exception as e:
-            self.logger.error(f"Erreur critique lors de l'extraction: {e}")
-            return ""
-        
-        finally:
-            # S'assurer que le document est fermé même en cas d'erreur
-            if doc is not None:
-                try:
-                    doc.close()
-                except Exception as e:
-                    self.logger.warning(f"Erreur lors de la fermeture du document: {e}")
-
-# === FIX COMPLET DU PIPELINE DES RELATIONS ===
-
-def debug_relationship_extraction(parser, text_sample: str) -> Dict[str, Any]:
-    """Debug approfondi du processus d'extraction des relations"""
-    
-    print("🔍 DEBUG EXTRACTION RELATIONS")
-    print("=" * 40)
-    
-    # 1. Vérifier le parser de relations
-    rel_parser = parser.relationship_parser
-    print(f"✅ RelationshipParser: {type(rel_parser).__name__}")
-    
-    # 2. Test sur échantillon
-    sample = text_sample[:1500] if len(text_sample) > 1500 else text_sample
-    print(f"📝 Échantillon testé ({len(sample)} caractères)")
-    print(f"Preview: '{sample[:100]}...'")
-    
-    # 3. Test direct extraction
-    try:
-        relations = rel_parser.extract_relationships(sample)
-        print(f"📊 Relations extraites: {len(relations)}")
-        
-        if relations:
-            for i, rel in enumerate(relations[:5]):  # Afficher 5 premiers
-                print(f"   {i+1}. Type: {rel.get('type', 'N/A')} - {rel}")
-        else:
-            print("   ⚠️ Aucune relation trouvée")
-            
-    except Exception as e:
-        print(f"   🚨 ERREUR extraction: {e}")
-        relations = []
-    
-    # 4. Test patterns individuellement
-    print(f"\n🎯 Test patterns individuels:")
-    if hasattr(rel_parser, 'patterns'):
-        for pattern_name, pattern in list(rel_parser.patterns.items())[:5]:  # Top 5 patterns
-            try:
-                matches = pattern.findall(sample)
-                print(f"   - {pattern_name}: {len(matches)} matches")
-                if matches:
-                    print(f"     Premier: {matches[0]}")
-            except Exception as e:
-                print(f"   - {pattern_name}: ERREUR - {e}")
-    
-    # 5. Test normalisation
-    try:
-        normalized = parser.text_parser.normalize_text(sample)
-        relations_norm = rel_parser.extract_relationships(normalized)
-        print(f"\n📝 Après normalisation: {len(relations_norm)} relations")
-    except Exception as e:
-        print(f"\n❌ Erreur normalisation: {e}")
-        relations_norm = []
-    
-    return {
-        'relations_brutes': relations,
-        'relations_normalisees': relations_norm,
-        'sample_text': sample[:500],  # Limiter pour debug
-        'success': len(relations) > 0 or len(relations_norm) > 0
-    }
-
-def fix_process_document_method(parser_instance) -> None:
-    """
-    Application complète du fix pour le pipeline des relations familiales
-    """
-    
-    def process_document_fixed(self, text: str, lieu: str = "Archive départementale") -> Dict[str, Any]:
-        """Version complètement corrigée du traitement de document"""
-        
-        # Initialisation
-        self.perf_logger.start_timer("process_document")
-        self.logger.info(f"🚀 Début traitement - Lieu: {lieu}")
-        
-        try:
-            # === PHASE 1: PRÉPARATION DU TEXTE ===
-            self.perf_logger.start_timer("text_preparation")
-            
-            print(f"📝 Texte d'entrée: {len(text)} caractères")
-            
-            # Normalisation
-            normalized_text = self.text_parser.normalize_text(text)
-            print(f"📝 Après normalisation: {len(normalized_text)} caractères")
-            
-            # Segmentation
-            segments = self.text_parser.extract_segments(normalized_text)
-            print(f"📦 Segments créés: {len(segments)}")
-            
-            self.perf_logger.end_timer("text_preparation")
-            
-            # === PHASE 2: EXTRACTION DES RELATIONS (CRITIQUE) ===
-            self.perf_logger.start_timer("relationship_extraction")
-            
-            print(f"\n🔗 === EXTRACTION DES RELATIONS ===")
-            
-            # Debug sur échantillon si texte volumineux
-            if len(normalized_text) > 5000:
-                debug_sample = normalized_text[:5000]
-                debug_result = debug_relationship_extraction(self, debug_sample)
-                print(f"🔍 Debug échantillon: {len(debug_result['relations_brutes'])} relations")
-            
-            # Extraction complète
-            print(f"🔄 Extraction sur texte complet...")
-            all_relationships = self.relationship_parser.extract_relationships(normalized_text)
-            
-            print(f"📊 === RÉSULTATS EXTRACTION ===")
-            print(f"   Total relations: {len(all_relationships)}")
-            
-            # Classification par type
-            filiations = []
-            parrainages = []
-            mariages = []
-            autres_relations = []
-            
-            for rel in all_relationships:
-                rel_type = rel.get('type', 'inconnu')
-                
-                if rel_type == 'filiation':
-                    filiations.append(rel)
-                elif rel_type in ['parrain', 'marraine']:
-                    parrainages.append(rel)
-                elif rel_type == 'mariage':
-                    mariages.append(rel)
-                else:
-                    autres_relations.append(rel)
-                    
-                # Debug première relation de chaque type
-                if len(filiations) == 1 and rel_type == 'filiation':
-                    print(f"   📋 Première filiation: {rel}")
-                elif len(parrainages) == 1 and rel_type in ['parrain', 'marraine']:
-                    print(f"   🤝 Premier parrainage: {rel}")
-                elif len(mariages) == 1 and rel_type == 'mariage':
-                    print(f"   💒 Premier mariage: {rel}")
-            
-            print(f"   📋 Filiations: {len(filiations)}")
-            print(f"   🤝 Parrainages: {len(parrainages)}")
-            print(f"   💒 Mariages: {len(mariages)}")
-            print(f"   ❓ Autres: {len(autres_relations)}")
-            
-            self.perf_logger.end_timer("relationship_extraction")
-            
-            # === PHASE 3: EXTRACTION DES PERSONNES ===
-            self.perf_logger.start_timer("person_extraction")
-            
-            print(f"\n👥 === EXTRACTION DES PERSONNES ===")
-            
-            names_and_info = []
-            for segment in segments:
-                segment_names = self.name_extractor.extract_complete_names_with_sources(
-                    segment['content'], 
-                    segment.get('source_reference', ''),
-                    segment.get('page_number')
-                )
-                names_and_info.extend(segment_names)
-            
-            print(f"   Noms extraits: {len(names_and_info)}")
-            
-            # Création des objets Person
-            persons = {}
-            for name_info in names_and_info:
-                try:
-                    person = self.person_manager.create_or_update_person(name_info)
-                    if person and hasattr(person, 'id') and person.id:
-                        persons[person.id] = person
-                except Exception as e:
-                    self.logger.warning(f"Erreur création personne {name_info}: {e}")
-            
-            print(f"   Personnes créées: {len(persons)}")
-            self.perf_logger.end_timer("person_extraction")
-            
-            # === PHASE 4: CRÉATION DES ACTES ===
-            self.perf_logger.start_timer("acte_creation")
-            
-            print(f"\n📋 === CRÉATION DES ACTES ===")
-            
-            actes = {}
-            for segment in segments:
-                try:
-                    segment_actes = self.acte_manager.extract_actes_from_segment(segment, persons)
-                    if segment_actes:
-                        actes.update(segment_actes)
-                except Exception as e:
-                    self.logger.warning(f"Erreur création actes segment: {e}")
-            
-            print(f"   Actes créés: {len(actes)}")
-            self.perf_logger.end_timer("acte_creation")
-            
-            # === PHASE 5: INTÉGRATION DES RELATIONS (CRITIQUE) ===
-            self.perf_logger.start_timer("relationship_integration")
-            
-            print(f"\n🔗 === INTÉGRATION DES RELATIONS ===")
-            
-            relations_applied = 0
-            
-            # Application des filiations
-            for i, filiation in enumerate(filiations):
-                try:
-                    if self._apply_filiation_to_persons(filiation, persons):
-                        relations_applied += 1
-                        if i < 3:  # Debug des 3 premières
-                            print(f"   ✅ Filiation {i+1} appliquée")
-                except Exception as e:
-                    print(f"   ❌ Erreur filiation {i}: {e}")
-            
-            # Application des parrainages
-            for i, parrainage in enumerate(parrainages):
-                try:
-                    if self._apply_parrainage_to_persons(parrainage, persons):
-                        relations_applied += 1
-                        if i < 3:  # Debug des 3 premiers
-                            print(f"   ✅ Parrainage {i+1} appliqué")
-                except Exception as e:
-                    print(f"   ❌ Erreur parrainage {i}: {e}")
-            
-            # Application des mariages
-            for i, mariage in enumerate(mariages):
-                try:
-                    if self._apply_mariage_to_persons(mariage, persons):
-                        relations_applied += 1
-                        if i < 3:  # Debug des 3 premiers
-                            print(f"   ✅ Mariage {i+1} appliqué")
-                except Exception as e:
-                    print(f"   ❌ Erreur mariage {i}: {e}")
-            
-            print(f"   Relations appliquées: {relations_applied}/{len(all_relationships)}")
-            self.perf_logger.end_timer("relationship_integration")
-            
-            # === PHASE 6: VALIDATION ===
-            self.perf_logger.start_timer("validation")
-            
-            validation_results = self._validate_data_enhanced(persons, actes, all_relationships)
-            
-            self.perf_logger.end_timer("validation")
-            
-            # === PHASE 7: CONSTRUCTION DU RÉSULTAT ===
-            
-            result = {
-                'persons': persons,
-                'actes': actes,
-                'filiations': filiations,
-                'parrainages': parrainages,
-                'mariages': mariages,
-                'autres_relations': autres_relations,
-                'relations_count': len(all_relationships),
-                'relations_applied': relations_applied,
-                'validation': validation_results,
-                'lieu': lieu,
-                'processing_time': self.perf_logger.get_total_time("process_document"),
-                'stats': {
-                    'segments_traites': len(segments),
-                    'noms_extraits': len(names_and_info),
-                    'personnes_creees': len(persons),
-                    'actes_crees': len(actes),
-                    'relations_totales': len(all_relationships),
-                    'relations_appliquees': relations_applied
-                }
-            }
-            
-            print(f"\n✅ === TRAITEMENT TERMINÉ ===")
-            print(f"   👥 Personnes: {len(persons)}")
-            print(f"   📋 Actes: {len(actes)}")
-            print(f"   🔗 Relations: {len(all_relationships)}")
-            print(f"   ✅ Relations intégrées: {relations_applied}")
-            print(f"   ⏱️ Temps: {result['processing_time']:.2f}s")
-            
-            self.perf_logger.end_timer("process_document")
-            return result
-            
-        except Exception as e:
-            self.logger.error(f"Erreur critique dans process_document: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
-    
-    # === MÉTHODES D'AIDE POUR L'APPLICATION DES RELATIONS ===
-    
-    def _apply_filiation_to_persons(self, filiation: Dict, persons: Dict) -> bool:
-        """Applique une filiation aux personnes avec validation"""
-        try:
-            enfant_name = filiation.get('enfant', '').strip()
-            pere_name = filiation.get('pere', '').strip()
-            mere_name = filiation.get('mere', '').strip()
-            
-            if not enfant_name:
-                return False
-            
-            # Trouver les personnes
-            enfant = self._find_person_by_name(enfant_name, persons)
-            pere = self._find_person_by_name(pere_name, persons) if pere_name else None
-            mere = self._find_person_by_name(mere_name, persons) if mere_name else None
-            
-            if enfant:
-                updated = False
-                if pere and not enfant.pere_id:
-                    enfant.pere_id = pere.id
-                    updated = True
-                if mere and not enfant.mere_id:
-                    enfant.mere_id = mere.id
-                    updated = True
-                
-                return updated
-            
-            return False
-            
-        except Exception as e:
-            self.logger.debug(f"Erreur application filiation: {e}")
-            return False
-    
-    def _apply_parrainage_to_persons(self, parrainage: Dict, persons: Dict) -> bool:
-        """Applique un parrainage aux personnes avec validation"""
-        try:
-            personne_name = parrainage.get('personne', '').strip()
-            enfant_name = parrainage.get('enfant', '').strip()
-            type_parrainage = parrainage.get('type', '')
-            
-            if not personne_name:
-                return False
-            
-            personne = self._find_person_by_name(personne_name, persons)
-            enfant = self._find_person_by_name(enfant_name, persons) if enfant_name else None
-            
-            if personne and enfant:
-                if type_parrainage == 'parrain' and not enfant.parrain_id:
-                    enfant.parrain_id = personne.id
-                    return True
-                elif type_parrainage == 'marraine' and not enfant.marraine_id:
-                    enfant.marraine_id = personne.id
-                    return True
-            
-            return False
-            
-        except Exception as e:
-            self.logger.debug(f"Erreur application parrainage: {e}")
-            return False
-    
-    def _apply_mariage_to_persons(self, mariage: Dict, persons: Dict) -> bool:
-        """Applique un mariage aux personnes avec validation"""
-        try:
-            epoux_name = mariage.get('epoux', '').strip()
-            epouse_name = mariage.get('epouse', '').strip()
-            
-            if not epoux_name or not epouse_name:
-                return False
-            
-            epoux = self._find_person_by_name(epoux_name, persons)
-            epouse = self._find_person_by_name(epouse_name, persons)
-            
-            if epoux and epouse and not epoux.conjoint_id and not epouse.conjoint_id:
-                epoux.conjoint_id = epouse.id
-                epouse.conjoint_id = epoux.id
-                return True
-            
-            return False
-            
-        except Exception as e:
-            self.logger.debug(f"Erreur application mariage: {e}")
-            return False
-    
-    def _find_person_by_name(self, name: str, persons: Dict):
-        """Recherche intelligente d'une personne par nom avec correspondance floue"""
-        if not name or not persons:
+        if not pdf_path.exists():
+            self.logger.error(f"Fichier PDF introuvable: {pdf_file}")
             return None
         
-        name_clean = name.strip().lower()
-        name_words = name_clean.split()
+        self.logger.info(f"Début analyse PDF: {pdf_path.name}")
+        self.logger.info(f"Taille: {pdf_path.stat().st_size / 1024 / 1024:.1f} MB")
+        self.logger.info(f"Limite pages: {max_pages or 'Toutes'}")
         
-        for person in persons.values():
-            # Match exact du nom complet
-            person_full = f"{' '.join(person.prenoms)} {person.nom}".strip().lower()
-            if person_full == name_clean:
-                return person
-            
-            # Match du nom de famille
-            if person.nom.lower() == name_clean:
-                return person
-            
-            # Match partiel (nom de famille + au moins un prénom)
-            if len(name_words) >= 2:
-                if person.nom.lower() == name_words[-1]:  # Nom de famille correspond
-                    # Vérifier si au moins un prénom correspond
-                    person_prenoms = [p.lower() for p in person.prenoms]
-                    if any(prenom in person_prenoms for prenom in name_words[:-1]):
-                        return person
+        self.performance_logger.start_timer("total_processing")
         
-        return None
+        try:
+            with PDFManagerUnifie() as pdf_manager:
+                
+                # Phase 1: Ouverture sécurisée
+                self.performance_logger.start_timer("document_opening")
+                
+                if not pdf_manager.ouvrir_document(str(pdf_path)):
+                    self.logger.error("Impossible d'ouvrir le PDF")
+                    return None
+                
+                self.performance_logger.end_timer("document_opening")
+                
+                # Phase 2: Analyse structure
+                self.performance_logger.start_timer("structure_analysis")
+                
+                analyse = pdf_manager.analyser_structure_complete(max_pages)
+                
+                if not analyse.get('page_analyses'):
+                    self.logger.error("Aucune page analysable trouvée")
+                    return None
+                
+                self.performance_logger.end_timer("structure_analysis")
+                
+                recommandation = analyse['recommandation']
+                resume = analyse['summary']
+                
+                self.logger.info(f"Analyse terminée en {analyse['analysis_time']:.1f}s")
+                self.logger.info(f"Pages analysées: {analyse['total_pages_analyzed']}")
+                self.logger.info(f"Pages recommandées: {len(recommandation['pages_suggerees'])}")
+                self.logger.info(f"Confiance: {recommandation['confiance']:.1f}%")
+                
+                # Affichage des meilleures pages
+                for i, detail in enumerate(recommandation['details_pages'][:5], 1):
+                    self.logger.info(f"Page {detail['page']}: Score {detail['score']} "
+                                   f"({detail['relations']} rel, {detail['personnes']} pers)")
+                
+                # Phase 3: Extraction du texte
+                pages_a_traiter = recommandation['pages_suggerees']
+                
+                if not pages_a_traiter:
+                    self.logger.warning("Aucune page de registre détectée")
+                    return self._create_empty_result(analyse)
+                
+                self.performance_logger.start_timer("text_extraction")
+                
+                texte_registres = pdf_manager.extraire_pages_selectionnees(pages_a_traiter)
+                
+                if not texte_registres:
+                    self.logger.error("Échec de l'extraction du texte")
+                    return None
+                
+                self.performance_logger.end_timer("text_extraction")
+                
+                # Phase 4: Traitement généalogique
+                self.performance_logger.start_timer("genealogical_processing")
+                
+                try:
+                    resultat_genealogique = self._traiter_contenu_genealogique(texte_registres)
+                    
+                    self.performance_logger.end_timer("genealogical_processing")
+                    
+                    # Mise à jour des statistiques globales
+                    self._update_global_stats(analyse, resultat_genealogique)
+                    
+                    # Construction du résultat final
+                    return self._build_final_result(
+                        analyse, recommandation, resultat_genealogique, pages_a_traiter
+                    )
+                    
+                except Exception as e:
+                    self.logger.error(f"Erreur traitement généalogique: {e}")
+                    return self._create_partial_result(analyse, pages_a_traiter, str(e))
+        
+        except Exception as e:
+            self.logger.error(f"Erreur critique durant l'analyse: {e}")
+            return None
+        
+        finally:
+            total_time = self.performance_logger.end_timer("total_processing")
+            self.logger.info(f"Traitement terminé en {total_time:.2f}s")
     
-    def _validate_data_enhanced(self, persons: Dict, actes: Dict, relations: List) -> Dict:
-        """Validation améliorée des données"""
+    def _traiter_contenu_genealogique(self, texte: str) -> Dict:
+        """Traite le contenu généalogique extrait"""
         
-        # Statistiques de base
-        persons_with_relations = 0
-        for person in persons.values():
-            if (person.pere_id or person.mere_id or person.conjoint_id or 
-                person.parrain_id or person.marraine_id):
-                persons_with_relations += 1
+        self.logger.info(f"Traitement généalogique de {len(texte):,} caractères")
         
-        validation_rate = (persons_with_relations / len(persons) * 100) if persons else 0
+        # Extraction des relations avec le parser robuste
+        self.performance_logger.start_timer("relationship_extraction")
+        
+        relations = self.relationship_parser.extract_relationships(texte)
+        
+        self.performance_logger.end_timer("relationship_extraction")
+        
+        # Classification des relations par type
+        filiations = [r for r in relations if r.get('type') == 'filiation']
+        mariages = [r for r in relations if r.get('type') == 'mariage']
+        parrainages = [r for r in relations if r.get('type') in ['parrain', 'marraine']]
+        
+        self.logger.info(f"Relations extraites: {len(relations)} total")
+        self.logger.info(f"  Filiations: {len(filiations)}")
+        self.logger.info(f"  Mariages: {len(mariages)}")
+        self.logger.info(f"  Parrainages: {len(parrainages)}")
+        
+        # Extraction des entités nommées (personnes)
+        personnes_extraites = self._extraire_personnes(texte)
+        
+        # Validation et calcul de qualité
+        validation_results = self._valider_donnees(relations, personnes_extraites)
         
         return {
-            'persons_total': len(persons),
-            'persons_with_relations': persons_with_relations,
-            'actes_total': len(actes),
-            'relations_extracted': len(relations),
-            'validation_rate': round(validation_rate, 1),
-            'data_quality': 'Excellente' if validation_rate > 70 else 'Bonne' if validation_rate > 40 else 'Moyenne'
+            'relations_count': len(relations),
+            'filiations': filiations,
+            'mariages': mariages,
+            'parrainages': parrainages,
+            'personnes_extraites': personnes_extraites,
+            'validation': validation_results,
+            'parser_stats': self.relationship_parser.stats.copy(),
+            'processing_time': self.performance_logger.get_total_time("relationship_extraction")
         }
     
-    # Application des méthodes à l'instance
-    parser_instance.process_document = types.MethodType(process_document_fixed, parser_instance)
-    parser_instance._apply_filiation_to_persons = types.MethodType(_apply_filiation_to_persons, parser_instance)
-    parser_instance._apply_parrainage_to_persons = types.MethodType(_apply_parrainage_to_persons, parser_instance)
-    parser_instance._apply_mariage_to_persons = types.MethodType(_apply_mariage_to_persons, parser_instance)
-    parser_instance._find_person_by_name = types.MethodType(_find_person_by_name, parser_instance)
-    parser_instance._validate_data_enhanced = types.MethodType(_validate_data_enhanced, parser_instance)
-    
-    print("🔧 Fix complet appliqué avec succès au parser!")
-
-# === FONCTION PRINCIPALE CORRIGÉE ===
-
-def analyser_et_traiter_pdf(pdf_path: str, max_pages: Optional[int] = None) -> Optional[Dict[str, Any]]:
-    """
-    Fonction principale d'analyse et traitement complet d'un PDF de registres paroissiaux
-    VERSION COMPLÈTEMENT CORRIGÉE ET OPTIMISÉE
-    
-    Args:
-        pdf_path: Chemin vers le fichier PDF à analyser
-        max_pages: Limite optionnelle du nombre de pages à traiter
+    def _extraire_personnes(self, texte: str) -> List[Dict]:
+        """Extrait les personnes mentionnées dans le texte"""
         
-    Returns:
-        Dict avec tous les résultats d'analyse et de traitement, ou None en cas d'échec
-    """
-    
-    print(f"🚀 === ANALYSE ET TRAITEMENT PDF COMPLET ===")
-    print(f"📁 Fichier: {pdf_path}")
-    print(f"📄 Limite pages: {max_pages if max_pages else 'Aucune'}")
-    print("=" * 60)
-    
-    # === PHASE 1: ANALYSE STRUCTURELLE DU PDF ===
-    
-    analyseur = SmartPDFAnalyzer()
-    
-    try:
-        print(f"\n📊 Phase 1: Analyse structurelle du PDF")
-        analyse = analyseur.analyze_pdf_structure(pdf_path, max_pages)
+        # Pattern pour noms de personnes
+        name_pattern = r'[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\-]+(?:\s+[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\-]+)+'
         
-    except FileNotFoundError:
-        print(f"❌ Fichier PDF non trouvé: {pdf_path}")
-        return None
-    except Exception as e:
-        print(f"❌ Erreur critique lors de l'analyse PDF: {e}")
-        return None
-    
-    # === PHASE 2: AFFICHAGE DES RÉSULTATS D'ANALYSE ===
-    
-    recommandation = analyse['recommendations']
-    summary = analyse.get('analysis_summary', {})
-    
-    print(f"\n📊 === RÉSULTATS DE L'ANALYSE ===")
-    print(f"Pages analysées: {analyse['total_pages_analyzed']}")
-    print(f"Pages dans le PDF: {analyse['total_pages_in_pdf']}")
-    print(f"Pages de registres détectées: {len(recommandation['pages_suggerees'])}")
-    print(f"Score maximum: {recommandation['meilleur_score']:.1f}")
-    print(f"Relations détectées: {recommandation['total_relations']}")
-    print(f"Personnes détectées: {recommandation['total_personnes']}")
-    print(f"Dates détectées: {recommandation['total_dates']}")
-    
-    if summary:
-        print(f"\n📈 Résumé qualité:")
-        print(f"  • Pages en français: {summary.get('pages_francais', 0)}/{summary.get('pages_totales', 0)} ({summary.get('pourcentage_francais', 0)}%)")
-        print(f"  • Score moyen: {summary.get('score_moyen', 0)}")
-        print(f"  • Pages prometteuses: {summary.get('pages_prometteuses', 0)}")
-    
-    # Distribution qualité
-    qualite = recommandation.get('qualite_distribution', {})
-    if qualite:
-        print(f"\n📊 Distribution qualité:")
-        print(f"  • Excellente (>15): {qualite.get('excellente', 0)} pages")
-        print(f"  • Bonne (10-15): {qualite.get('bonne', 0)} pages")
-        print(f"  • Moyenne (5-10): {qualite.get('moyenne', 0)} pages")
-        print(f"  • Faible (1-5): {qualite.get('faible', 0)} pages")
-        print(f"  • Nulle (<1): {qualite.get('nulle', 0)} pages")
-    
-    print(f"\n🏆 TOP 10 DES MEILLEURES PAGES:")
-    for i, detail in enumerate(recommandation['pages_details'][:10]):
-        print(f"{i+1:2d}. Page {detail['page']:3d}: Score {detail['score']:5.1f} "
-              f"({detail['relations']:2d} rel, {detail['personnes']:2d} pers, {detail['dates']:2d} dates) "
-              f"[{detail['langue']}]")
-        print(f"    Preview: {detail['preview'][:80]}...")
-        if i < 9:  # Pas de ligne vide après le dernier
-            print()
-    
-    # === PHASE 3: EXTRACTION DU TEXTE ===
-    
-    pages_a_traiter = recommandation['pages_suggerees']
-    
-    if not pages_a_traiter:
-        print(f"\n❌ Aucune page de registre détectée avec suffisamment de confiance")
-        print(f"💡 Suggestion: Vérifiez le contenu du PDF ou ajustez les paramètres d'analyse")
-        return None
-    
-    print(f"\n📄 === EXTRACTION DU TEXTE ===")
-    print(f"Pages sélectionnées: {len(pages_a_traiter)}")
-    
-    texte_registres = analyseur.extraire_pages_registres(pdf_path, pages_a_traiter)
-    
-    if not texte_registres:
-        print(f"❌ Échec de l'extraction du texte")
-        return None
-    
-    # === PHASE 4: TRAITEMENT GÉNÉALOGIQUE AVEC FIX COMPLET ===
-    
-    print(f"\n🧬 === TRAITEMENT GÉNÉALOGIQUE AVANCÉ ===")
-    
-    try:
-        # Import des modules de traitement
-        from main import GenealogyParser
-        from exporters.report_generator import ReportGenerator
+        matches = re.findall(name_pattern, texte)
         
-        print(f"🔧 Application du fix complet pour les relations familiales...")
+        # Déduplication et nettoyage
+        personnes_uniques = {}
+        for match in matches:
+            clean_name = re.sub(r'\s+', ' ', match.strip())
+            if len(clean_name) > 3 and clean_name not in personnes_uniques:
+                personnes_uniques[clean_name] = {
+                    'nom_complet': clean_name,
+                    'occurrences': texte.count(clean_name)
+                }
         
-        # Création et configuration du parser
-        parser = GenealogyParser()
-        parser.config.max_persons = 10000  # Augmenté pour gros volumes
-        parser.config.cache_size = 5000    # Cache plus important
+        return list(personnes_uniques.values())
+    
+    def _valider_donnees(self, relations: List[Dict], personnes: List[Dict]) -> Dict:
+        """Valide la cohérence des données extraites"""
         
-        # 🚨 APPLICATION DU FIX COMPLET 🚨
-        fix_process_document_method(parser)
-        print(f"✅ Fix relationnel appliqué avec succès!")
+        validation_rate = 0.0
+        quality_score = "Moyenne"
         
-        # Traitement avec le parser corrigé
-        print(f"\n🔄 Lancement du traitement généalogique...")
-        resultat = parser.process_document(texte_registres, "Archive départementale")
-        
-        # === PHASE 5: AFFICHAGE DES RÉSULTATS ===
-        
-        print(f"\n📋 === RÉSULTATS DU TRAITEMENT GÉNÉALOGIQUE ===")
-        
-        try:
-            ReportGenerator.print_formatted_results(resultat)
-        except Exception as e:
-            print(f"⚠️ Erreur affichage rapport: {e}")
-        
-        # Statistiques générales
-        try:
-            stats = parser.get_global_statistics()
-        except Exception:
-            # Fallback si get_global_statistics n'existe pas
-            stats = {
-                'persons': {'total_persons': len(resultat.get('persons', {}))},
-                'actes': {'total_actes': len(resultat.get('actes', {})), 'validation_rate': 0}
-            }
-        
-        # === PHASE 6: AFFICHAGE FINAL CORRIGÉ ===
-        
-        print(f"\n📊 === STATISTIQUES FINALES ===")
-        print("=" * 35)
-        print(f"Pages traitées: {len(pages_a_traiter)}")
-        print(f"Personnes identifiées: {stats['persons']['total_persons']}")
-        print(f"Actes créés: {stats['actes']['total_actes']}")
-        
-        # Comptage corrigé des relations
-        filiations_count = len(resultat.get('filiations', []))
-        parrainages_count = len(resultat.get('parrainages', []))
-        mariages_count = len(resultat.get('mariages', []))
-        total_relations = resultat.get('relations_count', 0)
-        relations_applied = resultat.get('relations_applied', 0)
-        
-        print(f"Relations familiales: {total_relations}")
-        print(f"  • Filiations: {filiations_count}")
-        print(f"  • Parrainages: {parrainages_count}")
-        print(f"  • Mariages: {mariages_count}")
-        print(f"Relations intégrées: {relations_applied}")
-        
-        validation = resultat.get('validation', {})
-        print(f"Taux de validation: {validation.get('validation_rate', 0):.1f}%")
-        print(f"Qualité des données: {validation.get('data_quality', 'Non évaluée')}")
-        
-        # Temps de traitement
-        processing_time = resultat.get('processing_time', 0)
-        print(f"Temps de traitement: {processing_time:.1f}s")
-        
-        # === RETOUR RÉSULTAT COMPLET ===
+        if relations and personnes:
+            # Calculer un taux de validation basé sur la cohérence
+            personnes_dans_relations = set()
+            for rel in relations:
+                if rel.get('type') == 'filiation':
+                    if rel.get('enfant'):
+                        personnes_dans_relations.add(rel['enfant'].lower())
+                    if rel.get('pere'):
+                        personnes_dans_relations.add(rel['pere'].lower())
+                    if rel.get('mere'):
+                        personnes_dans_relations.add(rel['mere'].lower())
+                elif rel.get('type') == 'mariage':
+                    if rel.get('epouse'):
+                        personnes_dans_relations.add(rel['epouse'].lower())
+                    if rel.get('epoux'):
+                        personnes_dans_relations.add(rel['epoux'].lower())
+            
+            personnes_extraites = {p['nom_complet'].lower() for p in personnes}
+            
+            if personnes_extraites:
+                validation_rate = len(personnes_dans_relations.intersection(personnes_extraites)) / len(personnes_extraites) * 100
+                
+                if validation_rate > 70:
+                    quality_score = "Excellente"
+                elif validation_rate > 40:
+                    quality_score = "Bonne"
+                elif validation_rate > 20:
+                    quality_score = "Moyenne"
+                else:
+                    quality_score = "Faible"
         
         return {
+            'validation_rate': round(validation_rate, 1),
+            'data_quality': quality_score,
+            'total_persons': len(personnes),
+            'total_relations': len(relations),
+            'coherence_score': round(validation_rate / 100, 2)
+        }
+    
+    def _update_global_stats(self, analyse: Dict, resultat_genealogique: Dict):
+        """Met à jour les statistiques globales"""
+        self.global_stats['documents_processed'] += 1
+        self.global_stats['total_pages_analyzed'] += analyse.get('total_pages_analyzed', 0)
+        self.global_stats['total_relations_found'] += resultat_genealogique.get('relations_count', 0)
+        self.global_stats['processing_time_total'] += self.performance_logger.get_total_time("total_processing")
+    
+    def _build_final_result(self, analyse: Dict, recommandation: Dict, 
+                           resultat_genealogique: Dict, pages_a_traiter: List[int]) -> Dict:
+        """Construit le résultat final complet"""
+        
+        total_relations = resultat_genealogique.get('relations_count', 0)
+        validation = resultat_genealogique.get('validation', {})
+        
+        return {
+            'success': True,
             'pages_analysees': analyse['total_pages_analyzed'],
             'pages_registres': len(pages_a_traiter),
             'pages_suggerees': pages_a_traiter,
-            'resultats_genealogiques': resultat,
-            'statistiques': stats,
+            'resultats_genealogiques': resultat_genealogique,
+            'statistiques': {
+                'persons': {'total_persons': len(resultat_genealogique.get('personnes_extraites', []))},
+                'relations': {
+                    'total_relations': total_relations,
+                    'filiations': len(resultat_genealogique.get('filiations', [])),
+                    'mariages': len(resultat_genealogique.get('mariages', [])),
+                    'parrainages': len(resultat_genealogique.get('parrainages', []))
+                }
+            },
             'analyse_pdf': analyse,
             'qualite_extraction': {
                 'relations_extraites': total_relations,
-                'relations_integrees': relations_applied,
-                'taux_integration': round((relations_applied / total_relations * 100) if total_relations else 0, 1),
-                'qualite_donnees': validation.get('data_quality', 'Non évaluée')
-            }
+                'qualite_donnees': validation.get('data_quality', 'Non évaluée'),
+                'taux_validation': validation.get('validation_rate', 0)
+            },
+            'performance': self.performance_logger.get_all_results(),
+            'recommandation': recommandation
         }
+    
+    def _create_empty_result(self, analyse: Dict) -> Dict:
+        """Crée un résultat vide quand aucune page n'est trouvée"""
+        return {
+            'success': False,
+            'pages_analysees': analyse['total_pages_analyzed'],
+            'pages_registres': 0,
+            'pages_suggerees': [],
+            'resultats_genealogiques': {'relations_count': 0},
+            'analyse_pdf': analyse,
+            'error': 'Aucune page de registre détectée'
+        }
+    
+    def _create_partial_result(self, analyse: Dict, pages: List[int], error: str) -> Dict:
+        """Crée un résultat partiel en cas d'erreur de traitement"""
+        return {
+            'success': False,
+            'pages_analysees': analyse['total_pages_analyzed'],
+            'pages_registres': len(pages),
+            'pages_suggerees': pages,
+            'analyse_pdf': analyse,
+            'error': error
+        }
+    
+    def obtenir_statistiques_globales(self) -> Dict:
+        """Retourne les statistiques globales de l'analyseur"""
+        stats = self.global_stats.copy()
         
-    except ImportError as e:
-        print(f"❌ Erreur import modules: {e}")
-        print(f"💡 Vérifiez que main.py et les modules requis sont présents")
-        return None
-    
-    except Exception as e:
-        print(f"❌ Erreur critique durant le traitement généalogique:")
-        print(f"   {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return None
+        if stats['documents_processed'] > 0:
+            stats['average_pages_per_document'] = round(
+                stats['total_pages_analyzed'] / stats['documents_processed'], 1
+            )
+            stats['average_relations_per_document'] = round(
+                stats['total_relations_found'] / stats['documents_processed'], 1
+            )
+            stats['average_processing_time'] = round(
+                stats['processing_time_total'] / stats['documents_processed'], 2
+            )
+        
+        return stats
 
-# === POINT D'ENTRÉE PRINCIPAL ===
+def analyser_et_traiter_pdf(pdf_file: str, max_pages: Optional[int] = None) -> Optional[Dict]:
+    """
+    Fonction principale d'analyse et traitement d'un PDF
+    Version corrigée sans erreur "document closed"
+    
+    Args:
+        pdf_file: Chemin vers le fichier PDF
+        max_pages: Nombre maximum de pages à analyser
+        
+    Returns:
+        Dict contenant les résultats ou None en cas d'erreur
+    """
+    
+    analyzer = SmartPDFAnalyzer()
+    return analyzer.analyser_et_traiter_pdf(pdf_file, max_pages)
 
-if __name__ == "__main__":
+def main():
+    """Fonction principale avec interface en ligne de commande et export CSV"""
     
-    # Configuration du logging pour l'exécution directe
-    logging.getLogger().setLevel(logging.INFO)
+    import argparse
     
-    # Gestion des arguments
-    if len(sys.argv) < 2:
-        # Fichier par défaut pour tests
-        pdf_file = "inventairesommai03archuoft.pdf"
-        if not Path(pdf_file).exists():
-            print("❌ Fichier PDF par défaut non trouvé")
-            print("📖 Usage: python smart_pdf_analyzer.py <fichier.pdf> [max_pages]")
-            print("📖 Exemple: python smart_pdf_analyzer.py registres.pdf 100")
-            sys.exit(1)
-    else:
-        pdf_file = sys.argv[1]
+    parser = argparse.ArgumentParser(
+        description="Smart PDF Analyzer - Analyseur de registres paroissiaux"
+    )
+    parser.add_argument(
+        'pdf_file', 
+        nargs='?',
+        default=r'C:\Users\Louis\Documents\CodexGenea\inventairesommai03archuoft.pdf',
+        help='Fichier PDF à analyser'
+    )
+    parser.add_argument(
+        '--max-pages', 
+        type=int, 
+        help='Nombre maximum de pages à analyser'
+    )
+    parser.add_argument(
+        '--output', 
+        help='Fichier de sortie pour les résultats (JSON)'
+    )
+    parser.add_argument(
+        '--csv-dir',
+        default='RESULT',
+        help='Dossier pour les exports CSV (défaut: RESULT)'
+    )
+    parser.add_argument(
+        '--no-csv',
+        action='store_true',
+        help='Désactiver l\'export CSV automatique'
+    )
+    parser.add_argument(
+        '--verbose', 
+        action='store_true', 
+        help='Mode verbeux'
+    )
+    parser.add_argument(
+        '--stats-only', 
+        action='store_true', 
+        help='Afficher uniquement les statistiques'
+    )
     
-    # Limite de pages (optionnel)
-    max_pages = None
-    if len(sys.argv) > 2:
-        try:
-            max_pages = int(sys.argv[2])
-            if max_pages <= 0:
-                raise ValueError("Le nombre de pages doit être positif")
-        except ValueError as e:
-            print(f"❌ Nombre de pages invalide: {e}")
-            sys.exit(1)
+    args = parser.parse_args()
     
-    # === LANCEMENT DE L'ANALYSE COMPLÈTE ===
+    # Configuration du niveau de logging
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
     
-    print("🔧 SMART PDF ANALYZER v2.0.0 - VERSION COMPLÈTEMENT CORRIGÉE")
-    print("🎯 Fix relationnel intégré et optimisé")
+    # Vérification du fichier
+    if not Path(args.pdf_file).exists():
+        print(f"Erreur: Fichier '{args.pdf_file}' introuvable")
+        sys.exit(1)
+    
+    print("Smart PDF Analyzer - Version 3.0.1")
+    print("=" * 50)
+    print(f"Fichier: {Path(args.pdf_file).name}")
+    print(f"Limite pages: {args.max_pages or 'Toutes'}")
+    if not args.no_csv and CSV_EXPORT_AVAILABLE:
+        print(f"Export CSV: {args.csv_dir}")
     print()
     
-    resultat = analyser_et_traiter_pdf(pdf_file, max_pages)
-    
-    # === RÉSULTAT FINAL ===
-    
-    if resultat:
-        print(f"\n🎉 === TRAITEMENT COMPLET TERMINÉ AVEC SUCCÈS ===")
-        print(f"📄 Pages de registres trouvées et traitées: {resultat['pages_registres']}")
-        print(f"👥 Personnes avec informations complètes: {resultat['statistiques']['persons']['total_persons']}")
+    # Traitement principal
+    try:
+        resultat = analyser_et_traiter_pdf(args.pdf_file, args.max_pages)
         
-        # Affichage des relations extraites
-        resultats_genea = resultat['resultats_genealogiques']
-        qualite = resultat.get('qualite_extraction', {})
+        if resultat:
+            print("TRAITEMENT TERMINÉ AVEC SUCCÈS")
+            print("=" * 50)
+            
+            if resultat.get('success', True):
+                print(f"Pages de registres trouvées: {resultat['pages_registres']}")
+                
+                stats = resultat.get('statistiques', {})
+                if 'persons' in stats:
+                    print(f"Personnes extraites: {stats['persons']['total_persons']}")
+                
+                if 'relations' in stats:
+                    rel_stats = stats['relations']
+                    print(f"Relations familiales: {rel_stats['total_relations']}")
+                    print(f"  - Filiations: {rel_stats['filiations']}")
+                    print(f"  - Mariages: {rel_stats['mariages']}")
+                    print(f"  - Parrainages: {rel_stats['parrainages']}")
+                
+                qualite = resultat.get('qualite_extraction', {})
+                print(f"Qualité des données: {qualite.get('qualite_donnees', 'Non évaluée')}")
+                
+                # Performance
+                performance = resultat.get('performance', {})
+                if 'total_processing' in performance:
+                    print(f"Temps total: {performance['total_processing']:.2f}s")
+                
+                # Export automatique vers CSV
+                if not args.no_csv and CSV_EXPORT_AVAILABLE:
+                    print(f"\nExport CSV automatique vers {args.csv_dir}")
+                    print("-" * 30)
+                    try:
+                        fichiers_csv = exporter_vers_csv(resultat, args.csv_dir)
+                        print(f"Fichiers CSV créés:")
+                        for type_fichier, chemin in fichiers_csv.items():
+                            filename = Path(chemin).name
+                            print(f"  - {type_fichier}: {filename}")
+                        
+                        print(f"\nTous les fichiers sont dans le dossier: {Path(args.csv_dir).absolute()}")
+                        
+                    except Exception as e:
+                        print(f"Erreur lors de l'export CSV: {e}")
+                        if args.verbose:
+                            import traceback
+                            traceback.print_exc()
+            else:
+                print(f"TRAITEMENT PARTIEL: {resultat.get('error', 'Erreur inconnue')}")
+            
+            # Sauvegarde JSON (optionnelle)
+            if args.output:
+                try:
+                    with open(args.output, 'w', encoding='utf-8') as f:
+                        json.dump(resultat, f, indent=2, ensure_ascii=False)
+                    print(f"Résultats JSON sauvegardés: {args.output}")
+                except Exception as e:
+                    print(f"Erreur sauvegarde JSON: {e}")
+            
+            # Statistiques détaillées
+            if args.verbose or args.stats_only:
+                print("\nSTATISTIQUES DÉTAILLÉES")
+                print("-" * 30)
+                
+                if 'performance' in resultat:
+                    for operation, temps in resultat['performance'].items():
+                        print(f"{operation}: {temps:.2f}s")
+                
+                if 'analyse_pdf' in resultat:
+                    resume = resultat['analyse_pdf'].get('summary', {})
+                    for key, value in resume.items():
+                        print(f"{key}: {value}")
         
-        if 'relations_count' in resultats_genea and resultats_genea['relations_count'] > 0:
-            print(f"🔗 RELATIONS FAMILIALES EXTRAITES: {resultats_genea['relations_count']}")
-            print(f"✅ Relations intégrées avec succès: {qualite.get('relations_integrees', 0)}")
-            print(f"📊 Taux d'intégration: {qualite.get('taux_integration', 0)}%")
-            print(f"🏆 Qualité globale: {qualite.get('qualite_donnees', 'Non évaluée')}")
         else:
-            print(f"⚠️ Aucune relation familiale extraite - Vérifiez le contenu du document")
-        
-        print(f"\n💾 Résultats sauvegardés et prêts pour export")
-        
-    else:
-        print(f"\n❌ === ÉCHEC DU TRAITEMENT ===")
-        print(f"💡 Suggestions:")
-        print(f"   • Vérifiez que le PDF contient des registres paroissiaux")
-        print(f"   • Essayez avec un nombre de pages limité")
-        print(f"   • Consultez les logs pour plus de détails")
-        
+            print("ÉCHEC DU TRAITEMENT")
+            print("Vérifiez les logs pour plus de détails")
+            sys.exit(1)
+    
+    except KeyboardInterrupt:
+        print("\nTraitement interrompu par l'utilisateur")
         sys.exit(1)
+    
+    except Exception as e:
+        print(f"Erreur inattendue: {e}")
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+def test_analyzer():
+    """Fonction de test pour valider le fonctionnement"""
+    
+    print("Test du Smart PDF Analyzer")
+    print("=" * 30)
+    
+    # Test avec fichier d'exemple
+    test_files = [
+        r'C:\Users\Louis\Documents\CodexGenea\inventairesommai03archuoft.pdf',
+        'test.pdf',
+        'sample.pdf'
+    ]
+    
+    for pdf_file in test_files:
+        if Path(pdf_file).exists():
+            print(f"Test avec: {Path(pdf_file).name}")
+            
+            try:
+                resultat = analyser_et_traiter_pdf(pdf_file, max_pages=5)
+                
+                if resultat:
+                    print("Test réussi")
+                    print(f"Pages analysées: {resultat.get('pages_analysees', 0)}")
+                    print(f"Pages recommandées: {resultat.get('pages_registres', 0)}")
+                else:
+                    print("Test échoué: Aucun résultat")
+                
+                return True
+                
+            except Exception as e:
+                print(f"Test échoué: {e}")
+                return False
+    
+    print("Aucun fichier de test trouvé")
+    return False
+
+if __name__ == "__main__":
+    # Si appelé directement, lancer l'interface principale
+    if len(sys.argv) > 1 and sys.argv[1] == '--test':
+        test_analyzer()
+    else:
+        main()

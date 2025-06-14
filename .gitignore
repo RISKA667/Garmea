@@ -569,6 +569,7 @@ stats/
 !docs/API.md
 !docs/DEPLOYMENT.md
 
+.csv
 # ============================================
 # FIN DU FICHIER .gitignore
 # Version: 2.0.0 - Projet Garméa
