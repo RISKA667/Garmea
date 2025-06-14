@@ -1,7 +1,7 @@
 # parsers/modern_nlp_parser.py
 import spacy
 import re
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Union
 from dataclasses import dataclass
 from functools import lru_cache
 import logging
@@ -177,6 +177,48 @@ class ModernNLPParser:
         
         return None
     
+    def _parse_mariage_spacy(self, span, full_text: str) -> Optional[RelationshipMatch]:
+        """Parse un mariage détecté par spaCy"""
+        try:
+            entities = [ent for ent in span.ents if ent.label_ == "PER"]
+            
+            if len(entities) >= 2:
+                return RelationshipMatch(
+                    type="mariage",
+                    persons={
+                        "epouse": entities[0].text,
+                        "epoux": entities[1].text
+                    },
+                    confidence=0.82,
+                    source_span=(span.start_char, span.end_char),
+                    context=span.text
+                )
+        except Exception as e:
+            self.logger.debug(f"Erreur parse mariage spaCy: {e}")
+        
+        return None
+    
+    def _parse_parrain_spacy(self, span, full_text: str) -> Optional[RelationshipMatch]:
+        """Parse un parrainage détecté par spaCy"""
+        try:
+            entities = [ent for ent in span.ents if ent.label_ == "PER"]
+            
+            if entities:
+                return RelationshipMatch(
+                    type="parrainage",
+                    persons={
+                        "parrain": entities[0].text,
+                        "filleul": self._find_child_in_context(span.start_char, full_text)
+                    },
+                    confidence=0.80,
+                    source_span=(span.start_char, span.end_char),
+                    context=span.text
+                )
+        except Exception as e:
+            self.logger.debug(f"Erreur parse parrain spaCy: {e}")
+        
+        return None
+    
     def _find_child_in_context(self, span_start: int, text: str, window: int = 100) -> Optional[str]:
         """Trouve l'enfant dans le contexte précédant la filiation"""
         # Chercher dans les 100 caractères précédents
@@ -287,17 +329,45 @@ class ModernNLPParser:
             'patterns_count': len(self.fallback_patterns) if hasattr(self, 'fallback_patterns') else 0
         }
 
-# Factory function pour créer le bon parser
-def create_relationship_parser(prefer_nlp: bool = True) -> 'RelationshipParser':
+# FIX: Parser de base pour compatibilité
+class FallbackRelationshipParser:
+    """Parser de base compatible avec l'interface existante"""
+    
+    def __init__(self, config=None):
+        self.config = config
+        self.logger = logging.getLogger(__name__)
+    
+    def extract_relationships(self, text: str) -> List[Dict]:
+        """Interface compatible avec l'ancien parser"""
+        modern_parser = ModernNLPParser()
+        relationships = modern_parser.extract_relationships(text)
+        
+        # Convertir au format attendu
+        return [
+            {
+                'type': rel.type,
+                'persons': rel.persons,
+                'confidence': rel.confidence,
+                'context': rel.context
+            }
+            for rel in relationships
+        ]
+
+# Factory function corrigée
+def create_relationship_parser(prefer_nlp: bool = True) -> Union[ModernNLPParser, FallbackRelationshipParser]:
     """Factory pour créer le parser optimal selon l'environnement"""
     
     if prefer_nlp and HAS_SPACY:
         return ModernNLPParser(fallback_to_regex=True)
     else:
-        # Retourner votre parser existant comme fallback
-        from config.settings import ParserConfig
-        from parsers.relationship_parser import RelationshipParser
-        return RelationshipParser(ParserConfig())
+        # FIX: Utiliser le parser de fallback intégré
+        try:
+            from config.settings import ParserConfig
+            from parsers.relationship_parser import RelationshipParser
+            return RelationshipParser(ParserConfig())
+        except ImportError:
+            # Si l'import échoue, utiliser notre fallback
+            return FallbackRelationshipParser()
 
 # Instructions d'installation pour améliorer les performances
 INSTALL_INSTRUCTIONS = """
@@ -326,19 +396,20 @@ if __name__ == "__main__":
         # Parser moderne
         relationships = parser.extract_relationships(sample_text)
         
-        for rel in relationships:
-            print(f"\nType: {rel.type}")
-            print(f"Personnes: {rel.persons}")
-            print(f"Confiance: {rel.confidence:.2f}")
-            print(f"Contexte: {rel.context[:80]}...")
-    
-    else:
-        # Parser existant
-        relationships = parser.extract_relationships(sample_text)
-        print(f"\nRelations trouvées: {len(relationships)}")
-        
-        for rel in relationships[:3]:
-            print(f"- {rel}")
+        if isinstance(relationships, list) and len(relationships) > 0:
+            if isinstance(relationships[0], RelationshipMatch):
+                # Format ModernNLPParser
+                for rel in relationships:
+                    print(f"\nType: {rel.type}")
+                    print(f"Personnes: {rel.persons}")
+                    print(f"Confiance: {rel.confidence:.2f}")
+                    print(f"Contexte: {rel.context[:80]}...")
+            else:
+                # Format dict
+                for rel in relationships:
+                    print(f"\nType: {rel.get('type')}")
+                    print(f"Personnes: {rel.get('persons')}")
+                    print(f"Confiance: {rel.get('confidence', 0):.2f}")
     
     if not HAS_SPACY:
         print("\n" + INSTALL_INSTRUCTIONS)
