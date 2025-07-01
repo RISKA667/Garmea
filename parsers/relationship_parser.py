@@ -1,439 +1,540 @@
+# parsers/robust_relationship_parser.py - VERSION AMÉLIORÉE
+"""
+Parser de relations robuste avec corrections OCR intégrées
+Intègre directement les corrections découvertes dans le processus de parsing
+"""
+
 import re
+from typing import List, Dict, Optional, Tuple, Set
+from dataclasses import dataclass
 import logging
-from typing import List, Dict, Optional, Tuple
 from functools import lru_cache
-from config.settings import ParserConfig
+
+@dataclass
+class RelationMatch:
+    """Match de relation avec métadonnées enrichies"""
+    type: str
+    persons: Dict[str, str]
+    confidence: float
+    source_text: str
+    position: Tuple[int, int]
+    ocr_corrections_applied: List[str] = None
 
 class RelationshipParser:
-    """Parser optimisé pour relations familiales dans registres paroissiaux français"""
+    """Parser de relations robuste avec corrections OCR intégrées"""
     
-    def __init__(self, config: ParserConfig):
-        self.config = config
+    def __init__(self):
         self.logger = logging.getLogger(__name__)
         
-        # Compilation des patterns optimisés
-        self._compile_relationship_patterns()
+        # Statistiques enrichies
+        self.stats = {
+            'total_processed': 0,
+            'relations_found': 0,
+            'ocr_corrections_applied': 0,
+            'pattern_successes': {},
+            'text_cleaning_improvements': 0
+        }
         
-        # Cache des résultats
-        self._relationship_cache = {}
-        self._name_cache = {}
+        # Dictionnaire de corrections OCR intégrées
+        self.corrections_ocr_genealogiques = {
+            # === ERREURS "Aii" SYSTÉMATIQUES ===
+            'Aiicelle': 'Ancelle',
+            'Aiigotin': 'Antigotin',
+            'Aiimont': 'Aumont',
+            'Aiiber': 'Auber',
+            'Aiivray': 'Auvray',
+            'Aii-': 'Anne',
+            
+            # === ERREURS TRANSCRIPTION RELATIONS ===
+            'Jaeques': 'Jacques',
+            'Franteois': 'François',
+            'Catlierhie': 'Catherine',
+            'Guillaïune': 'Guillaume',
+            'Nicollas': 'Nicolas',
+            'Muiiie': 'Marie',
+            
+            # === NOMS TRONQUÉS DANS RELATIONS ===
+            'Marie- An': 'Marie-Anne',
+            'An-': 'Anne',
+            'Ade-': 'Adeline',
+            'Alexandre-': 'Alexandre',
+            
+            # === ERREURS CONTEXTUELLES RELATIONS ===
+            'épous de': 'épouse de',
+            'fils d ': 'fils de ',
+            'fille d ': 'fille de ',
+            'parr ain': 'parrain',
+            'marr aine': 'marraine'
+        }
+        
+        # Configuration des patterns améliorés
+        self._setup_enhanced_patterns()
+        
+        # Vocabulaires de relations avec variantes OCR
+        self._setup_relation_vocabularies()
+        
+        # Cache pour performance
+        self._cache = {}
+        self._cleaning_cache = {}
     
-    def _compile_relationship_patterns(self):
-        """Compile les patterns pour registres paroissiaux français réels"""
+    def _setup_enhanced_patterns(self):
+        """Configure des patterns améliorés pour OCR dégradé"""
         
-        # Pattern nom flexible pour registres historiques
-        nom_pattern = r'[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\'\-]*(?:\s+[A-Za-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\'\-]+)*'
+        # Pattern de nom très tolérant aux erreurs OCR
+        nom_pattern = r'[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß\d][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\'\-\.\s]{1,40}'
         
         self.patterns = {
-            # === FILIATIONS PRINCIPALES ===
-            # "Jean Le Boucher, fils de Pierre Le Boucher et de Marie Dupré"
-            'filiation_complete': re.compile(
-                rf'({nom_pattern}),?\s+(?:fils|fille|filz)\s+de\s+({nom_pattern})(?:\s+et\s+(?:de\s+)?({nom_pattern}))?',
-                re.IGNORECASE
+            # === FILIATION ROBUSTE ===
+            'filiation_basic_robust': re.compile(
+                rf'({nom_pattern})\s*[,\.;:]?\s*(?:fils?|filles?|filz|f1ls|flls)\s+[deoû]+\s+({nom_pattern})',
+                re.IGNORECASE | re.MULTILINE
             ),
             
-            # "Charlotte, fille de Jean Le Boucher, éc., sr de La Granville, et de Françoise Varin"
-            'filiation_avec_titres': re.compile(
-                rf'({nom_pattern}),?\s+(?:fils|fille|filz)\s+de\s+({nom_pattern}(?:\s*,\s*[^,]*?)*?)(?:\s+et\s+(?:de\s+)?({nom_pattern}))?',
+            'filiation_with_mother_robust': re.compile(
+                rf'({nom_pattern})\s*[,\.;:]?\s*(?:fils?|filles?|filz)\s+[deoû]+\s+({nom_pattern})\s+(?:et|&)\s+(?:[deoû]+\s+)?({nom_pattern})',
+                re.IGNORECASE | re.MULTILINE
+            ),
+            
+            # === MARIAGE ROBUSTE ===
+            'marriage_robust': re.compile(
+                rf'({nom_pattern})\s*[,\.;:]?\s*(?:épouse?|femme|espouse|epouse)\s+[deoû]+\s+({nom_pattern})',
+                re.IGNORECASE | re.MULTILINE
+            ),
+            
+            'widowhood_robust': re.compile(
+                rf'({nom_pattern})\s*[,\.;:]?\s*(?:veuve?|vve?|veuf)\s+[deoû]+\s+({nom_pattern})',
+                re.IGNORECASE | re.MULTILINE
+            ),
+            
+            # === PARRAINAGE ROBUSTE ===
+            'godfather_robust': re.compile(
+                rf'(?:parr?[aâ]?in?[es]?|parr?\.?|parr?:)\s*[\.;:,]?\s*({nom_pattern})',
+                re.IGNORECASE | re.MULTILINE
+            ),
+            
+            'godmother_robust': re.compile(
+                rf'(?:marr?[aâ]?ines?|marr?\.?|marr?:|marrines?)\s*[\.;:,]?\s*({nom_pattern})',
+                re.IGNORECASE | re.MULTILINE
+            ),
+            
+            # === PATTERNS CONTEXTUELS AMÉLIORÉS ===
+            'marriage_ceremony': re.compile(
+                rf'(?:mariage|mar\.|épous[ée])\s+.*?(?:de|entre)\s+({nom_pattern})\s+(?:et|avec|&)\s+({nom_pattern})',
                 re.IGNORECASE | re.DOTALL
             ),
             
-            # === MARIAGES ===
-            # "Françoise Picot, épouse de Charles Le Boucher"
-            'epouse_de': re.compile(
-                rf'({nom_pattern}),?\s+épouse\s+de\s+({nom_pattern})',
-                re.IGNORECASE
-            ),
-            
-            # "Marie, femme de Jean"
-            'femme_de': re.compile(
-                rf'({nom_pattern}),?\s+(?:femme|espouse)\s+de\s+({nom_pattern})',
-                re.IGNORECASE
-            ),
-            
-            # "Catherine, veuve de Pierre"
-            'veuve_de': re.compile(
-                rf'({nom_pattern}),?\s+veuve\s+de\s+({nom_pattern})',
-                re.IGNORECASE
-            ),
-            
-            # === PARRAINAGES ===
-            # "parr.: Charles Le Boucher"
-            'parrain_complet': re.compile(
-                rf'parr?(?:ain)?\s*[\.:]?\s*({nom_pattern}(?:\s*,\s*[^;,]*?)*?)(?:[;,]|$|\s+marr)',
-                re.IGNORECASE
-            ),
-            
-            # "marraine: Perrette Dupré"
-            'marraine_complete': re.compile(
-                rf'marr?(?:aine)?\s*[\.:]?\s*({nom_pattern}(?:\s*,\s*[^;,]*?)*?)(?:[;,]|$)',
-                re.IGNORECASE
-            ),
-            
-            # === FORMATS STRUCTURÉS ===
-            # Baptême complet avec parrainages
-            'bapteme_structure': re.compile(
-                rf'(?:baptême|bapt\.|naissance).*?(?:de\s+)?({nom_pattern}).*?(?:parr?(?:ain)?\s*[\.:]?\s*({nom_pattern})).*?(?:marr?(?:aine)?\s*[\.:]?\s*({nom_pattern}))',
+            'baptism_context': re.compile(
+                rf'(?:bapt[êe]?me?|baptisé[e]?|ondoyé[e]?)\s+.*?({nom_pattern})\s*[,\.;]?\s*(?:fils?|filles?)\s+[deoû]+\s+({nom_pattern})',
                 re.IGNORECASE | re.DOTALL
             ),
             
-            # Mariage structuré
-            'mariage_structure': re.compile(
-                rf'mariage\s+de\s+({nom_pattern}).*?(?:avec|et|à)\s+({nom_pattern})',
-                re.IGNORECASE | re.DOTALL
-            ),
-            
-            # === RELATIONS CONTEXTUELLES ===
-            # "Jean et Marie" (couples probables)
-            'couple_et': re.compile(
-                rf'({nom_pattern})\s+et\s+(?:de\s+)?({nom_pattern})',
-                re.IGNORECASE
-            ),
-            
-            # Relations avec conjonctions
-            'parents_conjoints': re.compile(
-                rf'({nom_pattern})\s+et\s+({nom_pattern}),?\s+(?:ses\s+)?(?:père\s+et\s+mère|parents)',
+            # === RELATIONS MULTIPLES ===
+            'family_group': re.compile(
+                rf'({nom_pattern})\s+et\s+({nom_pattern})\s*[,\.;]?\s*(?:ses\s+)?(?:père\s+et\s+mère|parents)',
                 re.IGNORECASE
             )
         }
     
+    def _setup_relation_vocabularies(self):
+        """Configure les vocabulaires de relations avec variantes OCR"""
+        
+        self.relation_vocabularies = {
+            'filiation': {
+                'fils': ['fils', 'filz', 'f1ls', 'flls', 'fïls'],
+                'fille': ['fille', 'fïlle', 'f1lle', 'fllle'],
+                'de': ['de', 'du', 'dû', 'cl', 'cl0']
+            },
+            'mariage': {
+                'épouse': ['épouse', 'espouse', 'epouse', 'femme'],
+                'époux': ['époux', 'espoux', 'epoux', 'mari'],
+                'veuve': ['veuve', 'vve', 'weuve'],
+                'veuf': ['veuf', 'vf', 'weuf']
+            },
+            'parrainage': {
+                'parrain': ['parrain', 'parrin', 'parrein', 'parr', 'parr.', 'parr:', 'parrair'],
+                'marraine': ['marraine', 'marrine', 'marrirre', 'marr', 'marr.', 'marr:']
+            }
+        }
+    
     @lru_cache(maxsize=500)
-    def extract_relationships(self, text: str) -> List[Dict]:
-        """Extraction principale des relations avec cache optimisé"""
-        if not text or len(text.strip()) < 10:
+    def _clean_text_for_parsing(self, text: str) -> Tuple[str, List[str]]:
+        """
+        Nettoyage spécialisé avec corrections OCR intégrées
+        
+        Returns:
+            Tuple[str, List[str]]: (texte_nettoyé, corrections_appliquées)
+        """
+        if not text:
+            return text, []
+        
+        corrections_appliquees = []
+        cleaned = text
+        
+        # 1. Corrections OCR spécifiques aux généalogies
+        for erreur, correction in self.corrections_ocr_genealogiques.items():
+            if erreur in cleaned:
+                cleaned = cleaned.replace(erreur, correction)
+                corrections_appliquees.append(f"{erreur} → {correction}")
+                self.stats['ocr_corrections_applied'] += 1
+        
+        # 2. Corrections OCR courantes (existantes)
+        corrections_ocr_base = {
+            r'\bl\b(?=[A-Z])': 'I',  # l -> I devant majuscule
+            r'\b1(?=[a-z])': 'l',    # 1 -> l devant minuscule
+            r'\b0(?=[a-z])': 'o',    # 0 -> o
+            r'(?<=[a-z])1(?=[a-z])': 'l',  # 1 -> l entre lettres
+            r'(?<=[a-z])0(?=[a-z])': 'o',  # 0 -> o entre lettres
+            r'rn(?=[aeiou])': 'm',   # rn -> m devant voyelle
+            r'cl(?=[aeiou])': 'd',   # cl -> d devant voyelle
+            r'ii(?=[bcdfghjklmnpqrstvwxyz])': 'n',  # ii -> n devant consonne
+        }
+        
+        for pattern, replacement in corrections_ocr_base.items():
+            nouvelle_version = re.sub(pattern, replacement, cleaned)
+            if nouvelle_version != cleaned:
+                corrections_appliquees.append(f"Pattern OCR: {pattern}")
+                cleaned = nouvelle_version
+        
+        # 3. Normalisation de la ponctuation pour relations
+        ponctuation_fixes = {
+            r'[,;\.]{2,}': ',',      # Ponctuation multiple
+            r'\s*[,;\.]\s*de\s+': ' de ',  # "., de" -> " de "
+            r'\s*[,;\.]\s*et\s+': ' et ',  # "., et" -> " et "
+            r'(\w)\s*-\s*(\w)': r'\1-\2',  # Espaces autour tirets
+        }
+        
+        for pattern, replacement in ponctuation_fixes.items():
+            nouvelle_version = re.sub(pattern, replacement, cleaned)
+            if nouvelle_version != cleaned:
+                corrections_appliquees.append(f"Ponctuation: {pattern}")
+                cleaned = nouvelle_version
+        
+        # 4. Normaliser les espaces
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        
+        if corrections_appliquees:
+            self.stats['text_cleaning_improvements'] += 1
+        
+        return cleaned, corrections_appliquees
+    
+    def extract_relationships(self, text: str, strict_mode: bool = False) -> List[RelationMatch]:
+        """Extraction principale avec corrections OCR intégrées"""
+        
+        if not text or len(text.strip()) < 20:
             return []
         
-        # Vérifier le cache
-        cache_key = hash(text[:500])  # Hash des premiers 500 caractères
-        if cache_key in self._relationship_cache:
-            return self._relationship_cache[cache_key]
+        self.stats['total_processed'] += 1
+        
+        # Nettoyer le texte avec corrections OCR
+        cleaned_text, corrections_appliquees = self._clean_text_for_parsing(text)
         
         relationships = []
-        processed_positions = set()
+        used_positions = set()
         
-        # Traiter chaque pattern par priorité
-        for pattern_name, pattern in self.patterns.items():
-            for match in pattern.finditer(text):
-                # Éviter les chevauchements
-                match_range = range(match.start(), match.end())
-                if any(pos in processed_positions for pos in match_range):
-                    continue
-                
-                relation = self._parse_relationship_match(pattern_name, match, text)
+        # Appliquer les patterns dans l'ordre de priorité
+        pattern_order = self._get_pattern_order(strict_mode)
+        
+        for pattern_name in pattern_order:
+            pattern = self.patterns[pattern_name]
+            
+            matches = self._find_non_overlapping_matches(
+                pattern, cleaned_text, used_positions
+            )
+            
+            for match in matches:
+                relation = self._parse_match(pattern_name, match, cleaned_text)
                 if relation:
+                    # Ajouter les informations de correction OCR
+                    relation.ocr_corrections_applied = corrections_appliquees
                     relationships.append(relation)
-                    processed_positions.update(match_range)
+                    used_positions.update(range(match.start(), match.end()))
+                    
+                    # Statistiques
+                    if pattern_name not in self.stats['pattern_successes']:
+                        self.stats['pattern_successes'][pattern_name] = 0
+                    self.stats['pattern_successes'][pattern_name] += 1
         
-        # Post-traitement pour nettoyer et valider
-        relationships = self._validate_and_clean_relationships(relationships)
+        # Post-traitement et validation
+        relationships = self._validate_relationships(relationships, cleaned_text)
         
-        # Mettre en cache
-        self._relationship_cache[cache_key] = relationships
+        self.stats['relations_found'] += len(relationships)
         
         return relationships
     
-    def _parse_relationship_match(self, pattern_name: str, match: re.Match, full_text: str) -> Optional[Dict]:
-        """Parse un match spécifique selon le pattern"""
-        groups = match.groups()
+    def _get_pattern_order(self, strict_mode: bool) -> List[str]:
+        """Ordre d'application des patterns selon le mode"""
+        
+        if strict_mode:
+            return [
+                'filiation_basic_robust',
+                'marriage_robust',
+                'godfather_robust',
+                'godmother_robust'
+            ]
+        else:
+            return [
+                'filiation_with_mother_robust',
+                'filiation_basic_robust', 
+                'marriage_ceremony',
+                'marriage_robust',
+                'widowhood_robust',
+                'baptism_context',
+                'family_group',
+                'godfather_robust',
+                'godmother_robust'
+            ]
+    
+    def _find_non_overlapping_matches(self, pattern, text: str, used_positions: Set[int]):
+        """Trouve les matches non-chevauchants"""
+        
+        matches = []
+        for match in pattern.finditer(text):
+            match_range = range(match.start(), match.end())
+            if not any(pos in used_positions for pos in match_range):
+                matches.append(match)
+        
+        return matches
+    
+    def _parse_match(self, pattern_name: str, match, text: str) -> Optional[RelationMatch]:
+        """Parse un match spécifique selon le pattern avec corrections OCR"""
         
         try:
-            if pattern_name in ['filiation_complete', 'filiation_avec_titres']:
-                enfant = self._clean_person_name(groups[0])
-                pere = self._clean_person_name(groups[1]) if len(groups) > 1 and groups[1] else None
-                mere = self._clean_person_name(groups[2]) if len(groups) > 2 and groups[2] else None
+            groups = match.groups()
+            confidence = 0.8  # Base confidence
+            
+            if 'filiation' in pattern_name:
+                enfant = self._clean_person_name(groups[0]) if groups[0] else ""
+                pere = self._clean_person_name(groups[1]) if len(groups) > 1 and groups[1] else ""
+                mere = self._clean_person_name(groups[2]) if len(groups) > 2 and groups[2] else ""
                 
-                if enfant:
-                    # Détecter le genre depuis le pattern
-                    match_text = match.group(0).lower()
-                    genre = 'F' if 'fille' in match_text else 'M' if 'fils' in match_text or 'filz' in match_text else None
-                    
-                    return {
-                        'type': 'filiation',
-                        'enfant': enfant,
-                        'pere': pere,
-                        'mere': mere,
-                        'genre': genre,
-                        'position': (match.start(), match.end()),
-                        'source_text': match.group(0)[:100]
-                    }
-            
-            elif pattern_name in ['epouse_de', 'femme_de', 'veuve_de']:
-                epouse = self._clean_person_name(groups[0])
-                epoux = self._clean_person_name(groups[1])
+                persons = {'enfant': enfant, 'pere': pere}
+                if mere:
+                    persons['mere'] = mere
+                    confidence += 0.1  # Bonus pour relation complète
                 
-                if epouse and epoux:
-                    statut = 'veuve' if pattern_name == 'veuve_de' else 'mariée'
-                    return {
-                        'type': 'mariage',
-                        'epouse': epouse,
-                        'epoux': epoux,
-                        'statut': statut,
-                        'position': (match.start(), match.end()),
-                        'source_text': match.group(0)[:100]
-                    }
+                return RelationMatch(
+                    type='filiation',
+                    persons=persons,
+                    confidence=confidence,
+                    source_text=match.group(0),
+                    position=(match.start(), match.end())
+                )
             
-            elif pattern_name == 'parrain_complet':
-                parrain = self._clean_person_name(groups[0])
-                if parrain:
-                    return {
-                        'type': 'parrain',
-                        'personne': parrain,
-                        'position': (match.start(), match.end()),
-                        'source_text': match.group(0)[:50]
-                    }
-            
-            elif pattern_name == 'marraine_complete':
-                marraine = self._clean_person_name(groups[0])
-                if marraine:
-                    return {
-                        'type': 'marraine',
-                        'personne': marraine,
-                        'position': (match.start(), match.end()),
-                        'source_text': match.group(0)[:50]
-                    }
-            
-            elif pattern_name == 'bapteme_structure':
-                enfant = self._clean_person_name(groups[0]) if groups[0] else None
-                parrain = self._clean_person_name(groups[1]) if len(groups) > 1 and groups[1] else None
-                marraine = self._clean_person_name(groups[2]) if len(groups) > 2 and groups[2] else None
+            elif 'marriage' in pattern_name or 'widowhood' in pattern_name:
+                personne1 = self._clean_person_name(groups[0]) if groups[0] else ""
+                personne2 = self._clean_person_name(groups[1]) if len(groups) > 1 and groups[1] else ""
                 
-                relations = []
-                if enfant and parrain:
-                    relations.append({
-                        'type': 'parrain',
-                        'enfant': enfant,
-                        'personne': parrain,
-                        'position': (match.start(), match.end()),
-                        'source_text': match.group(0)[:100]
-                    })
-                if enfant and marraine:
-                    relations.append({
-                        'type': 'marraine',
-                        'enfant': enfant,
-                        'personne': marraine,
-                        'position': (match.start(), match.end()),
-                        'source_text': match.group(0)[:100]
-                    })
-                return relations[0] if relations else None
-            
-            elif pattern_name == 'mariage_structure':
-                epoux = self._clean_person_name(groups[0])
-                epouse = self._clean_person_name(groups[1])
+                # Déterminer époux/épouse selon le contexte
+                context = match.group(0).lower()
+                if 'épouse' in context or 'femme' in context:
+                    persons = {'epouse': personne1, 'epoux': personne2}
+                else:
+                    persons = {'epoux': personne1, 'epouse': personne2}
                 
-                if epoux and epouse:
-                    return {
-                        'type': 'mariage',
-                        'epoux': epoux,
-                        'epouse': epouse,
-                        'statut': 'mariage',
-                        'position': (match.start(), match.end()),
-                        'source_text': match.group(0)[:100]
-                    }
-            
-            elif pattern_name == 'couple_et':
-                personne1 = self._clean_person_name(groups[0])
-                personne2 = self._clean_person_name(groups[1])
+                rel_type = 'veuvage' if 'widow' in pattern_name else 'mariage'
                 
-                if personne1 and personne2:
-                    return {
-                        'type': 'couple_potentiel',
-                        'personne1': personne1,
-                        'personne2': personne2,
-                        'position': (match.start(), match.end()),
-                        'source_text': match.group(0)[:50]
-                    }
+                return RelationMatch(
+                    type=rel_type,
+                    persons=persons,
+                    confidence=confidence,
+                    source_text=match.group(0),
+                    position=(match.start(), match.end())
+                )
             
-            elif pattern_name == 'parents_conjoints':
-                pere = self._clean_person_name(groups[0])
-                mere = self._clean_person_name(groups[1])
+            elif 'god' in pattern_name:
+                personne = self._clean_person_name(groups[0]) if groups[0] else ""
+                rel_type = 'parrain' if 'father' in pattern_name else 'marraine'
                 
-                if pere and mere:
-                    return {
-                        'type': 'parents_identifies',
-                        'pere': pere,
-                        'mere': mere,
-                        'position': (match.start(), match.end()),
-                        'source_text': match.group(0)[:100]
-                    }
+                return RelationMatch(
+                    type=rel_type,
+                    persons={'personne': personne},
+                    confidence=confidence - 0.1,  # Moins précis sans contexte enfant
+                    source_text=match.group(0),
+                    position=(match.start(), match.end())
+                )
+            
+            elif 'family_group' in pattern_name:
+                pere = self._clean_person_name(groups[0]) if groups[0] else ""
+                mere = self._clean_person_name(groups[1]) if len(groups) > 1 and groups[1] else ""
+                
+                return RelationMatch(
+                    type='parents',
+                    persons={'pere': pere, 'mere': mere},
+                    confidence=confidence,
+                    source_text=match.group(0),
+                    position=(match.start(), match.end())
+                )
         
-        except (IndexError, AttributeError) as e:
-            self.logger.debug(f"Erreur parsing relation {pattern_name}: {e}")
+        except Exception as e:
+            self.logger.warning(f"Erreur parsing match {pattern_name}: {e}")
+            return None
         
         return None
     
-    def _clean_person_name(self, name: str) -> Optional[str]:
-        """Nettoyage avancé des noms pour registres français"""
-        if not name:
-            return None
+    @lru_cache(maxsize=1000)
+    def _clean_person_name(self, name: str) -> str:
+        """Nettoyage amélioré des noms de personnes avec corrections OCR"""
         
-        # Vérifier le cache
-        if name in self._name_cache:
-            return self._name_cache[name]
+        if not name:
+            return ""
         
         original_name = name
-        name = name.strip()
         
-        # Supprimer les titres et qualifications en fin
-        titres_suffixes = [
-            r',\s*écuyer.*$', r',\s*éc\..*$', r',\s*sieur.*$', r',\s*sr\.?.*$',
-            r',\s*seigneur.*$', r',\s*sgr\.?.*$', r',\s*avocat.*$', r',\s*conseiller.*$',
-            r',\s*curé.*$', r',\s*prêtre.*$', r',\s*marchand.*$', r',\s*notable.*$'
-        ]
+        # 1. Corrections OCR spécifiques
+        for erreur, correction in self.corrections_ocr_genealogiques.items():
+            if erreur in name:
+                name = name.replace(erreur, correction)
         
-        for suffix_pattern in titres_suffixes:
-            name = re.sub(suffix_pattern, '', name, flags=re.IGNORECASE)
+        # 2. Nettoyage standard
+        # Supprimer titres en préfixe
+        name = re.sub(r'^(?:messire|damoiselle|sieur?|sr\.?|éc\.?|monsieur|madame)\s+', '', name, flags=re.IGNORECASE)
         
-        # Nettoyer les particules problématiques
-        name = re.sub(r'^(?:de|du|des|le|la|les)\s+', '', name, flags=re.IGNORECASE)
+        # Supprimer professions et titres en suffixe
+        name = re.sub(r',\s*(?:écuyer|seigneur|prêtre|curé|marchand|laboureur).*$', '', name, flags=re.IGNORECASE)
         
-        # Normaliser les espaces multiples
-        name = re.sub(r'\s+', ' ', name)
+        # Nettoyer ponctuation
+        name = re.sub(r'[,;\.]+$', '', name)
+        name = re.sub(r'\s+', ' ', name).strip()
         
-        # Supprimer les caractères de ponctuation parasites
-        name = re.sub(r'[,;:\.]+$', '', name)
-        name = name.strip()
-        
-        # Validation finale
+        # Validation
         if len(name) < 2 or len(name) > 60:
-            self._name_cache[original_name] = None
-            return None
+            return ""
         
-        # Vérifier format nom valide
-        if not re.match(r'^[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß]', name):
-            self._name_cache[original_name] = None
-            return None
-        
-        # Capitalisation correcte
-        words = name.split()
-        capitalized_words = []
-        
-        for word in words:
-            if word.lower() in ['de', 'du', 'des', 'le', 'la', 'les']:
-                capitalized_words.append(word.lower())
-            elif word.lower() in ['Le', 'Du', 'De']:  # Particules importantes
-                capitalized_words.append(word.capitalize())
-            else:
-                capitalized_words.append(word.capitalize())
-        
-        clean_name = ' '.join(capitalized_words)
-        
-        # Cache et retour
-        self._name_cache[original_name] = clean_name
-        return clean_name
+        return name
     
-    def _validate_and_clean_relationships(self, relationships: List[Dict]) -> List[Dict]:
-        """Validation et nettoyage des relations extraites"""
-        if not relationships:
-            return []
+    def _validate_relationships(self, relationships: List[RelationMatch], text: str) -> List[RelationMatch]:
+        """Validation des relations avec prise en compte des corrections OCR"""
         
         validated = []
-        seen_relations = set()
         
         for rel in relationships:
-            try:
-                # Créer une clé unique pour éviter les doublons
-                if rel['type'] == 'filiation':
-                    key = f"filiation_{rel.get('enfant', '')}_{rel.get('pere', '')}_{rel.get('mere', '')}"
-                elif rel['type'] == 'mariage':
-                    key = f"mariage_{rel.get('epoux', '')}_{rel.get('epouse', '')}"
-                elif rel['type'] in ['parrain', 'marraine']:
-                    key = f"{rel['type']}_{rel.get('personne', '')}_{rel.get('enfant', '')}"
-                else:
-                    key = f"{rel['type']}_{rel.get('personne1', '')}_{rel.get('personne2', '')}"
-                
-                if key not in seen_relations:
-                    seen_relations.add(key)
-                    validated.append(rel)
-            
-            except KeyError:
+            # Validation de base
+            if not any(rel.persons.values()):
                 continue
+            
+            # Vérifier que les noms ne sont pas des artifacts OCR
+            valid_persons = {}
+            for role, nom in rel.persons.items():
+                if nom and self._is_valid_person_name(nom):
+                    valid_persons[role] = nom
+            
+            if valid_persons:
+                rel.persons = valid_persons
+                # Ajuster la confiance selon la qualité des corrections OCR
+                if rel.ocr_corrections_applied:
+                    rel.confidence = min(rel.confidence + 0.05, 0.95)  # Bonus léger
+                validated.append(rel)
         
         return validated
     
-    def extract_godparents(self, text: str) -> Dict[str, Optional[str]]:
-        """Extraction spécialisée des parrainages"""
-        godparents = {'parrain': None, 'marraine': None}
+    def _is_valid_person_name(self, name: str) -> bool:
+        """Validation améliorée des noms de personnes"""
         
-        relationships = self.extract_relationships(text)
+        if not name or len(name) < 2:
+            return False
         
-        for rel in relationships:
-            if rel['type'] == 'parrain' and not godparents['parrain']:
-                godparents['parrain'] = rel['personne']
-            elif rel['type'] == 'marraine' and not godparents['marraine']:
-                godparents['marraine'] = rel['personne']
+        # Rejeter les mots courants non-noms
+        mots_exclus = {'le', 'la', 'de', 'du', 'et', 'dans', 'pour', 'avec', 'sur'}
+        if name.lower() in mots_exclus:
+            return False
         
-        return godparents
+        # Doit contenir au moins une lettre
+        if not re.search(r'[a-zA-ZÀ-ÿ]', name):
+            return False
+        
+        # Pas uniquement de la ponctuation
+        if re.match(r'^[^a-zA-ZÀ-ÿ]+$', name):
+            return False
+        
+        return True
     
-    def find_parents(self, text: str, child_name: str) -> Tuple[Optional[str], Optional[str]]:
-        """Trouve les parents d'un enfant spécifique"""
-        relationships = self.extract_relationships(text)
+    def get_enhanced_statistics(self) -> Dict:
+        """Statistiques enrichies avec informations OCR"""
         
-        child_name_lower = child_name.lower()
-        
-        for rel in relationships:
-            if rel['type'] == 'filiation':
-                enfant_name = rel.get('enfant', '').lower()
-                if enfant_name == child_name_lower:
-                    return rel.get('pere'), rel.get('mere')
-        
-        return None, None
-    
-    def extract_marriages(self, text: str) -> List[Dict]:
-        """Extraction spécialisée des mariages"""
-        relationships = self.extract_relationships(text)
-        marriages = []
-        
-        for rel in relationships:
-            if rel['type'] == 'mariage':
-                marriages.append({
-                    'epoux': rel.get('epoux'),
-                    'epouse': rel.get('epouse'),
-                    'statut': rel.get('statut', 'mariée'),
-                    'source_text': rel.get('source_text', '')
-                })
-        
-        return marriages
-    
-    def get_statistics(self) -> Dict:
-        """Statistiques du parser"""
         return {
-            'cache_size': len(self._relationship_cache),
-            'name_cache_size': len(self._name_cache),
-            'patterns_count': len(self.patterns)
+            **self.stats,
+            'correction_rate': (
+                self.stats['ocr_corrections_applied'] / max(self.stats['total_processed'], 1)
+            ) * 100,
+            'success_rate': (
+                self.stats['relations_found'] / max(self.stats['total_processed'], 1)
+            ) * 100
         }
     
-    def clear_cache(self):
-        """Vide les caches"""
-        self._relationship_cache.clear()
-        self._name_cache.clear()
-    
-    def debug_text_analysis(self, text: str) -> Dict:
-        """Debug : analyse détaillée d'un texte"""
-        debug_info = {
-            'text_length': len(text),
-            'patterns_matches': {},
-            'relationships_found': [],
-            'names_extracted': set()
-        }
+    def debug_on_text(self, text: str) -> Dict:
+        """Debug enrichi avec informations de correction OCR"""
         
-        # Tester chaque pattern
+        print(f"🔧 DEBUG PARSER ROBUSTE AVEC OCR")
+        print("=" * 50)
+        
+        # Nettoyage du texte
+        cleaned, corrections = self._clean_text_for_parsing(text)
+        
+        print(f"📝 Corrections OCR appliquées: {len(corrections)}")
+        for correction in corrections[:5]:  # Afficher les 5 premières
+            print(f"   ✅ {correction}")
+        
+        if cleaned != text:
+            print(f"\n📋 Texte après nettoyage (premier 200 chars):")
+            print(f"   {cleaned[:200]}...")
+        
+        # Test des patterns
+        print(f"\n🔍 Test des patterns:")
+        pattern_results = {}
+        
         for pattern_name, pattern in self.patterns.items():
-            matches = list(pattern.finditer(text))
-            debug_info['patterns_matches'][pattern_name] = len(matches)
+            matches = list(pattern.finditer(cleaned))
+            pattern_results[pattern_name] = matches
             
-            for match in matches[:3]:  # Limiter à 3 exemples
-                debug_info['patterns_matches'][f"{pattern_name}_example"] = match.group(0)[:100]
+            if matches:
+                print(f"   ✅ {pattern_name}: {len(matches)} matches")
+                print(f"      Exemple: '{matches[0].group(0)[:60]}...'")
+            else:
+                print(f"   ❌ {pattern_name}: 0 matches")
         
-        # Relations trouvées
-        relationships = self.extract_relationships(text)
-        debug_info['relationships_found'] = relationships
+        # Extraction complète
+        print(f"\n🔗 Extraction complète:")
+        relations = self.extract_relationships(text, strict_mode=False)
         
-        # Noms uniques
-        for rel in relationships:
-            for key, value in rel.items():
-                if isinstance(value, str) and len(value) > 2 and key != 'source_text':
-                    debug_info['names_extracted'].add(value)
+        print(f"   Relations trouvées: {len(relations)}")
+        for rel in relations:
+            print(f"   - {rel.type}: {rel.persons} (confiance: {rel.confidence:.2f})")
+            if rel.ocr_corrections_applied:
+                print(f"     Corrections OCR: {len(rel.ocr_corrections_applied)}")
         
-        debug_info['names_extracted'] = list(debug_info['names_extracted'])
-        
-        return debug_info
+        return {
+            'original_text': text,
+            'cleaned_text': cleaned,
+            'ocr_corrections': corrections,
+            'pattern_results': pattern_results,
+            'final_relations': relations,
+            'statistics': self.get_enhanced_statistics()
+        }
+
+# === TEST ET VALIDATION ===
+
+if __name__ == "__main__":
+    # Test du parser amélioré
+    parser = RobustRelationshipParser()
+    
+    # Texte de test avec erreurs OCR simulées
+    test_text = """
+    Jean Aiicelle, fils de Pierre Aiicelle et Catlierhie Aiimont.
+    Mariage de Franteois Guillaïune avec Marie- An.
+    Jaeques- Roch Adam, épous de Marguerite Ade-.
+    Parr ain: Charles Le Boucher. Marr aine: Perrette Dupré.
+    """
+    
+    print("=== TEST PARSER ROBUSTE AMÉLIORÉ ===\n")
+    
+    # Debug complet
+    result = parser.debug_on_text(test_text)
+    
+    # Statistiques finales
+    print(f"\n📊 Statistiques finales:")
+    stats = parser.get_enhanced_statistics()
+    for key, value in stats.items():
+        if isinstance(value, float):
+            print(f"   - {key}: {value:.1f}%")
+        else:
+            print(f"   - {key}: {value}")

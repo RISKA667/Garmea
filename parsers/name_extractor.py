@@ -1,591 +1,427 @@
+# parsers/name_extractor.py - VERSION AMÉLIORÉE
+"""
+Extracteur de noms amélioré avec corrections OCR intégrées
+Intègre les corrections identifiées directement dans le processus d'extraction
+"""
+
 import re
 import logging
 from typing import List, Dict, Set, Optional, Tuple
 from functools import lru_cache
-import hashlib
+from collections import Counter
+
 from config.settings import ParserConfig
 
 class NameExtractor:
+    """Extracteur de noms avec corrections OCR intégrées"""
+    
     def __init__(self, config: ParserConfig):
         self.config = config
         self.logger = logging.getLogger(__name__)
-        self.known_places = set(config.known_places)
         
-        # Patterns compilés pour prénoms multiples
-        self.name_patterns = []
-        self._compile_enhanced_patterns()
-        
-        # Patterns pour relations familiales étendues
-        self.family_relation_patterns = self._compile_family_patterns()
-        
-        # Caches
-        self._false_positives_cache = set()
-        self._extraction_cache = {}
-        self._validation_cache = {}
-        
-        # Statistiques
+        # Statistiques de correction intégrées
         self.stats = {
-            'names_extracted': 0,
-            'multiple_prenoms_found': 0,
-            'extended_relations_found': 0,
-            'cache_hits': 0,
-            'cache_misses': 0,
-            'sources_extracted': 0
+            'noms_extraits': 0,
+            'corrections_ocr_appliquees': 0,
+            'noms_tronques_corriges': 0,
+            'erreurs_non_corrigees': 0
+        }
+        
+        # Dictionnaire de corrections OCR découvertes
+        self.corrections_ocr = {
+            # === ERREURS "Aii" SYSTÉMATIQUES ===
+            'Aiicelle': 'Ancelle',
+            'Aiiber': 'Auber', 
+            'Aiieelle': 'Ancelle',
+            'Aiigotin': 'Antigotin',
+            'Aiimont': 'Aumont',
+            'Aiil': 'Anil',
+            'Aiine-': 'Anne-',
+            'Aiivray': 'Auvray',
+            'Aii-': 'Anne',
+            
+            # === ERREURS TRANSCRIPTION COURANTES ===
+            'Jaeques': 'Jacques',
+            'Franteois': 'François',
+            'Catlierhie': 'Catherine',
+            'Guillaïune': 'Guillaume',
+            'Iagdeleine': 'Madeleine',
+            'Pi-ançois': 'François',
+            'Nicollas': 'Nicolas',
+            'Toussaiut': 'Toussaint',
+            'Muiiie': 'Marie',
+            'Jlagdeleiue': 'Madeleine',
+            'Cliarles': 'Charles',
+            'Jeau': 'Jean',
+            'Vietoire': 'Victoire',
+            
+            # === NOMS TRONQUÉS IDENTIFIÉS ===
+            'Ade-': 'Adeline',
+            'Marie- An': 'Marie-Anne',
+            'Adrienne-': 'Adrienne',
+            'Afigus-': 'Affiches',
+            'Agnès-': 'Agnès',
+            'Amfr-': 'Amfreville',
+            'An-': 'Anne',
+            'Ame-': 'Amélie',
+            'Alal-': 'Alain',
+            'Alau-': 'Alain',
+            'Alexandre-': 'Alexandre',
+            'Aimée-': 'Aimée',
+            'Aimép': 'Aimée',
+            
+            # === CORRECTIONS ADDITIONNELLES ===
+            'Padelaine': 'Madeleine',
+            'Cardinne': 'Catherine',
+            'Gabi-iel': 'Gabriel',
+            'Eléonore': 'Éléonore'
+        }
+        
+        # Patterns de noms améliorés
+        self._setup_enhanced_patterns()
+        
+        # Cache pour performance
+        self._correction_cache = {}
+    
+    def _setup_enhanced_patterns(self):
+        """Configure les patterns de reconnaissance de noms améliorés"""
+        
+        # Pattern principal plus tolérant aux erreurs OCR
+        self.nom_pattern = re.compile(
+            r'\b[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßĀ-ūŁł0-9]'  # Début acceptant chiffres (erreurs OCR)
+            r'[a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿĀ-ūŁł\'\-\.]*'   # Corps du nom
+            r'(?:\s+[a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿĀ-ūŁł\'\-\.]+)*'  # Noms composés
+            r'\b',
+            re.IGNORECASE
+        )
+        
+        # Patterns spécifiques pour titres et noms
+        self.patterns_titre_nom = {
+            'messire': re.compile(r'\b(Messire)\s+([A-Z][a-z\-\s]+)', re.IGNORECASE),
+            'damoiselle': re.compile(r'\b(Damoiselle)\s+([A-Z][a-z\-\s]+)', re.IGNORECASE),
+            'sieur': re.compile(r'\b(?:sieur?|sr\.?)\s+([A-Z][a-z\-\s]+)', re.IGNORECASE),
+            'ecuyer': re.compile(r'\b(?:écuyer?|éc\.?|ec\.?)\s+([A-Z][a-z\-\s]+)', re.IGNORECASE)
         }
     
-    def _compile_enhanced_patterns(self):
-        """Compile les patterns pour supporter les prénoms multiples"""
+    @lru_cache(maxsize=1000)
+    def _corriger_nom_ocr(self, nom: str) -> Tuple[str, bool]:
+        """
+        Applique les corrections OCR au nom avec cache
         
-        # Pattern pour prénom multiple : "Jean Pierre", "Marie Anne", etc.
-        multi_prenom_pattern = r'(?:[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ]+(?:\s+[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ]+)*)'
+        Returns:
+            Tuple[str, bool]: (nom_corrigé, correction_appliquée)
+        """
+        if not nom or len(nom) < 2:
+            return nom, False
         
-        try:
-            self.name_patterns = [
-                # Pattern 1: Prénoms multiples + "Le + Nom"
-                # Ex: "Jean Pierre Philippe Le Boucher"
-                re.compile(
-                    rf'\b({multi_prenom_pattern})\s+(Le\s+[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ]+(?:\s+[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß]+)*)',
-                    re.UNICODE
-                ),
-                
-                # Pattern 2: Prénoms multiples + particules "de"
-                # Ex: "Jean Pierre de Montigny"
-                re.compile(
-                    rf'\b({multi_prenom_pattern})\s+(de\s+[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ]+(?:\s+[A-Za-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ]+)*)',
-                    re.UNICODE
-                ),
-                
-                # Pattern 3: Prénoms multiples + "du"
-                # Ex: "Pierre Jean du Marais"
-                re.compile(
-                    rf'\b({multi_prenom_pattern})\s+(du\s+[A-Za-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ]+)',
-                    re.UNICODE | re.IGNORECASE
-                ),
-                
-                # Pattern 4: Prénoms multiples + nom simple
-                # Ex: "Jean Pierre Martin", "Marie Anne Dubois"
-                re.compile(
-                    rf'\b({multi_prenom_pattern})\s+([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ]{{2,}})',
-                    re.UNICODE
-                )
-            ]
-            
-            self.logger.debug(f"Patterns pour prénoms multiples compilés: {len(self.name_patterns)}")
-            
-        except Exception as e:
-            self.logger.error(f"Erreur compilation patterns prénoms multiples: {e}")
-            # Fallback vers patterns simples
-            self.name_patterns = [
-                re.compile(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+([A-Z][a-z]+)\b')
-            ]
+        nom_original = nom
+        correction_appliquee = False
+        
+        # 1. Corrections exactes (plus rapides)
+        if nom in self.corrections_ocr:
+            nom_corrige = self.corrections_ocr[nom]
+            self.stats['corrections_ocr_appliquees'] += 1
+            if '-' in nom_original:
+                self.stats['noms_tronques_corriges'] += 1
+            return nom_corrige, True
+        
+        # 2. Corrections partielles (patterns)
+        nom_corrige = nom
+        for erreur, correction in self.corrections_ocr.items():
+            if erreur in nom_corrige:
+                nom_corrige = nom_corrige.replace(erreur, correction)
+                correction_appliquee = True
+        
+        # 3. Corrections contextuelles pour noms tronqués
+        if '-' in nom and not correction_appliquee:
+            nom_corrige = self._corriger_nom_tronque_contextuel(nom)
+            if nom_corrige != nom:
+                correction_appliquee = True
+                self.stats['noms_tronques_corriges'] += 1
+        
+        if correction_appliquee:
+            self.stats['corrections_ocr_appliquees'] += 1
+        
+        return nom_corrige, correction_appliquee
     
-    def _compile_family_patterns(self) -> Dict[str, re.Pattern]:
-        """Compile les patterns pour relations familiales étendues"""
+    def _corriger_nom_tronque_contextuel(self, nom: str) -> str:
+        """Correction contextuelle des noms tronqués non mappés"""
         
-        name_pattern = r'[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ]+(?:\s+[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ]+)*'
+        # Si se termine par "- " ou "-", tentative de completion
+        if re.match(r'^[A-Z][a-z]+-?\s*$', nom):
+            nom_base = nom.rstrip('- ')
+            
+            # Heuristiques basées sur les patterns courants
+            if len(nom_base) <= 3:
+                # Très courts : probablement des prénoms
+                if nom_base.startswith('An'):
+                    return 'Anne'
+                elif nom_base.startswith('Ma'):
+                    return 'Marie'
+                elif nom_base.startswith('Je'):
+                    return 'Jean'
+            
+            elif len(nom_base) >= 4:
+                # Plus longs : possiblement des noms de famille
+                # Conserver tel quel pour éviter les erreurs
+                return nom_base
         
-        return {
-            # Relations de base (maintenues)
-            'filiation_fils': re.compile(
-                rf'({name_pattern}),?\s+fils\s+de\s+({name_pattern})(?:\s+et\s+de\s+({name_pattern}))?',
-                re.IGNORECASE
-            ),
-            'filiation_fille': re.compile(
-                rf'({name_pattern}),?\s+fille\s+de\s+({name_pattern})(?:\s+et\s+de\s+({name_pattern}))?',
-                re.IGNORECASE
-            ),
-            'epouse': re.compile(
-                rf'({name_pattern}),?\s+épouse\s+de\s+({name_pattern})',
-                re.IGNORECASE
-            ),
-            
-            # NOUVELLES relations étendues
-            'frere': re.compile(
-                rf'({name_pattern}),?\s+frère\s+de\s+({name_pattern})',
-                re.IGNORECASE
-            ),
-            'soeur': re.compile(
-                rf'({name_pattern}),?\s+s[oœ]ur\s+de\s+({name_pattern})',
-                re.IGNORECASE
-            ),
-            'neveu': re.compile(
-                rf'({name_pattern}),?\s+neveu\s+de\s+({name_pattern})',
-                re.IGNORECASE
-            ),
-            'niece': re.compile(
-                rf'({name_pattern}),?\s+nièce\s+de\s+({name_pattern})',
-                re.IGNORECASE
-            ),
-            'oncle': re.compile(
-                rf'({name_pattern}),?\s+oncle\s+de\s+({name_pattern})',
-                re.IGNORECASE
-            ),
-            'tante': re.compile(
-                rf'({name_pattern}),?\s+tante\s+de\s+({name_pattern})',
-                re.IGNORECASE
-            ),
-            'cousin': re.compile(
-                rf'({name_pattern}),?\s+cousin\s+de\s+({name_pattern})',
-                re.IGNORECASE
-            ),
-            'cousine': re.compile(
-                rf'({name_pattern}),?\s+cousine\s+de\s+({name_pattern})',
-                re.IGNORECASE
-            ),
-            
-            # Parrainages (maintenues)
-            'parrain': re.compile(
-                rf'parrain\s*:\s*({name_pattern})',
-                re.IGNORECASE
-            ),
-            'marraine': re.compile(
-                rf'marraine\s*:\s*({name_pattern})',
-                re.IGNORECASE
-            )
-        }
+        return nom
     
-    def extract_complete_names_with_sources(self, text: str, 
-                                          source_reference: str = "",
+    def extract_complete_names_with_sources(self, texte: str, source_ref: str, 
                                           page_number: int = None) -> List[Dict]:
-        """Extraction complète avec prénoms multiples et sources"""
+        """
+        Extraction complète avec corrections OCR intégrées
         
-        if not text or not isinstance(text, str):
-            self.logger.warning(f"Texte invalide pour extraction: {type(text)}")
+        Args:
+            texte: Texte à analyser
+            source_ref: Référence de la source
+            page_number: Numéro de page
+            
+        Returns:
+            List[Dict]: Personnes extraites avec corrections appliquées
+        """
+        if not texte or len(texte.strip()) < 10:
             return []
         
-        # Cache avec source
-        cache_key = self._create_cache_key(text, source_reference)
+        personnes = []
+        positions_utilisees = set()
         
-        if cache_key in self._extraction_cache:
-            self.stats['cache_hits'] += 1
-            return self._extraction_cache[cache_key]
-        
-        self.stats['cache_misses'] += 1
-        
-        # Extraction des personnes avec prénoms multiples
-        persons = self._extract_persons_with_multiple_prenoms(text, source_reference, page_number)
-        
-        # Extraction des relations familiales étendues
-        relations = self._extract_extended_family_relations(text, source_reference)
-        
-        # Associer les relations aux personnes
-        persons = self._associate_relations_to_persons(persons, relations)
-        
-        # Déduplication finale
-        persons = self._deduplicate_persons(persons)
-        
-        # Mise en cache
-        self._extraction_cache[cache_key] = persons
-        self.stats['names_extracted'] += len(persons)
-        
-        self.logger.debug(f"Extrait {len(persons)} personnes avec {len(relations)} relations")
-        return persons
-    
-    def _extract_persons_with_multiple_prenoms(self, text: str, 
-                                             source_reference: str,
-                                             page_number: int = None) -> List[Dict]:
-        """Extraction des personnes avec support prénoms multiples"""
-        
-        persons = []
-        found_names = set()
-        
-        for pattern in self.name_patterns:
-            for match in pattern.finditer(text):
-                prenoms_str = match.group(1).strip()
-                nom = match.group(2).strip()
-                
-                # Parser les prénoms multiples
-                prenoms = self._parse_multiple_prenoms(prenoms_str)
-                
-                if not prenoms or not nom:
+        # 1. Extraction avec patterns titre + nom (priorité haute)
+        for nom_pattern, pattern in self.patterns_titre_nom.items():
+            for match in pattern.finditer(texte):
+                if self._position_overlap(match, positions_utilisees):
                     continue
                 
-                full_name = f"{prenoms_str} {nom}"
+                titre = match.group(1) if match.lastindex >= 1 else ""
+                nom_brut = match.group(2) if match.lastindex >= 2 else match.group(1)
                 
-                if full_name in found_names or not self._is_valid_name_multiple_prenoms(prenoms, nom):
-                    continue
+                # Appliquer corrections OCR
+                nom_corrige, correction_appliquee = self._corriger_nom_ocr(nom_brut)
                 
-                found_names.add(full_name)
-                
-                # Si plusieurs prénoms détectés
-                if len(prenoms) > 1:
-                    self.stats['multiple_prenoms_found'] += 1
-                    self.logger.debug(f"Prénoms multiples détectés: {prenoms} {nom}")
-                
-                # Extraction des attributs contextuels
-                context_start = max(0, match.start() - 100)
-                context_end = min(len(text), match.end() + 100)
-                context = text[context_start:context_end]
-                
-                person_info = {
-                    'nom_complet': full_name,
-                    'prenoms': prenoms,  # NOUVEAU: Liste des prénoms
-                    'prenom': prenoms[0],  # Premier prénom pour compatibilité
-                    'nom': nom,
-                    'context': context,
-                    'professions': self._extract_professions_from_context(context, full_name),
-                    'statut': self._extract_status_from_context(context, full_name),
-                    'terres': self._extract_terres_from_context(context, full_name),
-                    'notable': self._is_notable_from_context(context),
-                    'source_reference': source_reference,
-                    'page_number': page_number,
-                    'position': (match.start(), match.end())
+                personne = {
+                    'nom_complet': f"{titre} {nom_corrige}".strip(),
+                    'nom': self._extraire_nom_famille(nom_corrige),
+                    'prenoms': self._extraire_prenoms(nom_corrige),
+                    'titre': titre,
+                    'source_reference': source_ref,
+                    'page': page_number,
+                    'correction_ocr_appliquee': correction_appliquee,
+                    'nom_original': nom_brut if correction_appliquee else None
                 }
                 
-                persons.append(person_info)
+                personnes.append(personne)
+                positions_utilisees.update(range(match.start(), match.end()))
+                self.stats['noms_extraits'] += 1
         
-        return persons
-    
-    def _parse_multiple_prenoms(self, prenoms_str: str) -> List[str]:
-        """Parse une chaîne contenant potentiellement plusieurs prénoms"""
-        
-        if not prenoms_str:
-            return []
-        
-        # Séparer par espaces
-        words = prenoms_str.strip().split()
-        prenoms = []
-        
-        for word in words:
-            # Vérifier que c'est bien un prénom (commence par majuscule, pas trop long)
-            if (word and 
-                word[0].isupper() and 
-                len(word) >= 2 and 
-                len(word) <= 20 and
-                word.isalpha()):
-                prenoms.append(word)
-        
-        return prenoms
-    
-    def _extract_extended_family_relations(self, text: str, source_reference: str) -> List[Dict]:
-        """Extraction des relations familiales étendues"""
-        
-        relations = []
-        
-        for relation_type, pattern in self.family_relation_patterns.items():
-            for match in pattern.finditer(text):
-                if relation_type in ['parrain', 'marraine']:
-                    # Pattern différent pour parrainages
-                    person_name = match.group(1).strip()
-                    relation = {
-                        'type': relation_type,
-                        'person': person_name,
-                        'source_reference': source_reference,
-                        'position': (match.start(), match.end()),
-                        'context': match.group(0)
-                    }
-                else:
-                    # Relations binaires (personne1 relation personne2)
-                    person1 = match.group(1).strip()
-                    person2 = match.group(2).strip()
-                    
-                    relation = {
-                        'type': relation_type,
-                        'person1': person1,
-                        'person2': person2,
-                        'source_reference': source_reference,
-                        'position': (match.start(), match.end()),
-                        'context': match.group(0)
-                    }
-                
-                relations.append(relation)
-                self.stats['extended_relations_found'] += 1
-        
-        return relations
-    
-    def _associate_relations_to_persons(self, persons: List[Dict], relations: List[Dict]) -> List[Dict]:
-        """Associe les relations aux personnes correspondantes"""
-        
-        # Créer un mapping nom -> personne
-        name_to_person = {}
-        for person in persons:
-            name_to_person[person['nom_complet']] = person
-        
-        # Associer les relations
-        for relation in relations:
-            if relation['type'] in ['parrain', 'marraine']:
-                person_name = relation['person']
-                if person_name in name_to_person:
-                    person = name_to_person[person_name]
-                    if 'relations' not in person:
-                        person['relations'] = []
-                    person['relations'].append({
-                        'type': relation['type'],
-                        'context': relation['context']
-                    })
+        # 2. Extraction générale des noms restants
+        for match in self.nom_pattern.finditer(texte):
+            if self._position_overlap(match, positions_utilisees):
+                continue
             
-            else:
-                # Relations binaires
-                person1_name = relation['person1']
-                person2_name = relation['person2']
-                
-                # Ajouter la relation aux deux personnes
-                if person1_name in name_to_person:
-                    person1 = name_to_person[person1_name]
-                    if 'relations' not in person1:
-                        person1['relations'] = []
-                    person1['relations'].append({
-                        'type': relation['type'],
-                        'avec': person2_name,
-                        'context': relation['context']
-                    })
-                
-                if person2_name in name_to_person:
-                    person2 = name_to_person[person2_name]
-                    if 'relations' not in person2:
-                        person2['relations'] = []
-                    
-                    # Relation inverse
-                    inverse_relations = {
-                        'frere': 'frere',
-                        'soeur': 'soeur', 
-                        'cousin': 'cousin',
-                        'cousine': 'cousine',
-                        'oncle': 'neveu',
-                        'tante': 'niece',
-                        'neveu': 'oncle',
-                        'niece': 'tante'
-                    }
-                    
-                    inverse_type = inverse_relations.get(relation['type'], relation['type'])
-                    person2['relations'].append({
-                        'type': inverse_type,
-                        'avec': person1_name,
-                        'context': relation['context']
-                    })
-        
-        return persons
-    
-    def _extract_sources_from_text(self, text: str) -> List[Dict]:
-        """Extrait les références de sources du texte"""
-        
-        sources = []
-        
-        # Pattern pour sources : "Archive, Collection Années, p.XX"
-        source_patterns = [
-            # Ex: "Creully, BMS 1665-1701, p.34"
-            r'([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\-\s]+),\s*([A-Z]{2,4}\s+\d{4}-\d{4}),\s*p\.(\d+)',
+            nom_brut = match.group(0).strip()
             
-            # Ex: "Registres paroissiaux de Saint-Pierre, 1650-1700"
-            r'(Registres\s+paroissiaux\s+de\s+[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\-\s]+),\s*(\d{4}-\d{4})',
-        ]
+            # Filtrer les mots trop courts ou non pertinents
+            if not self._est_nom_valide(nom_brut):
+                continue
+            
+            # Appliquer corrections OCR
+            nom_corrige, correction_appliquee = self._corriger_nom_ocr(nom_brut)
+            
+            personne = {
+                'nom_complet': nom_corrige,
+                'nom': self._extraire_nom_famille(nom_corrige),
+                'prenoms': self._extraire_prenoms(nom_corrige),
+                'source_reference': source_ref,
+                'page': page_number,
+                'correction_ocr_appliquee': correction_appliquee,
+                'nom_original': nom_brut if correction_appliquee else None
+            }
+            
+            personnes.append(personne)
+            positions_utilisees.update(range(match.start(), match.end()))
+            self.stats['noms_extraits'] += 1
         
-        for pattern in source_patterns:
-            for match in re.finditer(pattern, text):
-                source = {
-                    'reference': match.group(0),
-                    'archive': match.group(1).strip(),
-                    'collection': match.group(2).strip() if len(match.groups()) > 2 else "",
-                    'page': int(match.group(3)) if len(match.groups()) > 2 and match.group(3) else None,
-                    'position': (match.start(), match.end())
-                }
-                sources.append(source)
-                self.stats['sources_extracted'] += 1
+        # 3. Post-traitement et déduplication
+        personnes_uniques = self._dedupliquer_personnes(personnes)
         
-        return sources
+        # 4. Validation finale
+        personnes_validees = self._valider_personnes_extraites(personnes_uniques)
+        
+        return personnes_validees
     
-    def _is_valid_name_multiple_prenoms(self, prenoms: List[str], nom: str) -> bool:
-        """Validation spécialisée pour prénoms multiples"""
+    def _est_nom_valide(self, nom: str) -> bool:
+        """Validation améliorée des noms extraits"""
         
-        if not prenoms or not nom:
+        if not nom or len(nom) < 2:
             return False
         
-        # Vérifier chaque prénom individuellement
-        for prenom in prenoms:
-            if len(prenom) < 2 or len(prenom) > 20:
-                return False
-            if not re.match(r'^[A-ZÀ-ÿ][a-zà-ÿ\-\']*$', prenom):
-                return False
-            if self._is_common_word(prenom):
-                return False
+        # Filtrer mots courants non-noms
+        mots_exclus = {
+            'le', 'la', 'les', 'de', 'du', 'des', 'et', 'ou', 'en', 'dans',
+            'pour', 'avec', 'sans', 'sur', 'sous', 'par', 'ce', 'cette',
+            'son', 'sa', 'ses', 'leur', 'leurs', 'que', 'qui', 'dont',
+            'janvier', 'février', 'mars', 'avril', 'mai', 'juin',
+            'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'
+        }
         
-        # Vérifier le nom
-        if len(nom) < 2 or len(nom) > 40:
-            return False
-        if not re.match(r'^[A-ZÀ-ÿ][A-Za-zà-ÿ\s\-\']*$', nom):
+        if nom.lower() in mots_exclus:
             return False
         
-        # Vérifier que ce n'est pas un lieu connu
-        full_name = f"{' '.join(prenoms)} {nom}"
-        if any(lieu.lower() in full_name.lower() for lieu in self.known_places):
+        # Doit commencer par une majuscule (après correction éventuelle)
+        if not nom[0].isupper():
+            return False
+        
+        # Pas uniquement des chiffres
+        if nom.isdigit():
+            return False
+        
+        # Longueur raisonnable
+        if len(nom) > 50:
             return False
         
         return True
     
-    def _create_cache_key(self, text: str, source_reference: str = "") -> str:
-        """Crée une clé de cache incluant la source"""
-        try:
-            text_sample = text[:500] if len(text) > 500 else text
-            cache_data = f"{text_sample}_{source_reference}"
-            return hashlib.md5(cache_data.encode('utf-8')).hexdigest()
-        except Exception as e:
-            self.logger.debug(f"Erreur création clé cache: {e}")
-            return str(hash(f"{text[:200]}_{source_reference}"))
+    def _position_overlap(self, match, positions_utilisees: Set[int]) -> bool:
+        """Vérifie si un match chevauche avec des positions déjà utilisées"""
+        match_range = range(match.start(), match.end())
+        return any(pos in positions_utilisees for pos in match_range)
     
-    # Méthodes utilitaires (réutilisées des versions précédentes)
-    def _extract_professions_from_context(self, context: str, person_name: str) -> List[str]:
-        """Extraction des professions depuis le contexte"""
-        # Implémentation similaire à la version précédente
-        professions = []
-        context_lower = context.lower()
-        
-        profession_patterns = [
-            r'curé', r'prêtre', r'prestre',
-            r'avocat\s+du\s+roi', r'avocat',
-            r'conseiller', r'notaire', r'marchand'
-        ]
-        
-        for pattern in profession_patterns:
-            if re.search(pattern, context_lower):
-                professions.append(pattern.replace(r'\s+', ' '))
-        
-        return professions
+    def _extraire_nom_famille(self, nom_complet: str) -> str:
+        """Extrait le nom de famille du nom complet"""
+        # Logique simplifiée : dernier mot en majuscules
+        mots = nom_complet.split()
+        if mots:
+            for mot in reversed(mots):
+                if mot.isupper() or (mot.istitle() and len(mot) > 2):
+                    return mot
+            return mots[-1]  # Fallback
+        return nom_complet
     
-    def _extract_status_from_context(self, context: str, person_name: str) -> Optional[str]:
-        """Extraction du statut depuis le contexte"""
-        context_lower = context.lower()
+    def _extraire_prenoms(self, nom_complet: str) -> List[str]:
+        """Extrait les prénoms du nom complet"""
+        nom_famille = self._extraire_nom_famille(nom_complet)
+        prenoms_str = nom_complet.replace(nom_famille, '').strip()
         
-        if re.search(r'\b(?:seigneur|sgr)\b', context_lower):
-            return 'seigneur'
-        elif re.search(r'\b(?:écuyer|éc\.)\b', context_lower):
-            return 'écuyer'
-        elif re.search(r'\b(?:sieur|sr)\b', context_lower):
-            return 'sieur'
-        
-        return None
+        if prenoms_str:
+            return [p.strip() for p in prenoms_str.split() if p.strip()]
+        return []
     
-    def _extract_terres_from_context(self, context: str, person_name: str) -> List[str]:
-        """Extraction des terres depuis le contexte"""
-        terres = []
+    def _dedupliquer_personnes(self, personnes: List[Dict]) -> List[Dict]:
+        """Déduplication intelligente des personnes extraites"""
         
-        terre_pattern = r'(?:sr|sieur|seigneur)\s+de\s+([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zA-Zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+?)(?:[,;.]|$)'
+        personnes_uniques = {}
         
-        for match in re.finditer(terre_pattern, context, re.IGNORECASE):
-            terre = match.group(1).strip()
-            if terre and terre not in terres:
-                terres.append(terre)
-        
-        return terres
-    
-    def _is_notable_from_context(self, context: str) -> bool:
-        """Détection de notabilité depuis le contexte"""
-        context_lower = context.lower()
-        notable_patterns = [
-            "dans l'église", "sous le chœur", "près de l'autel",
-            "dame", "damoiselle", "noble", "honnête femme"
-        ]
-        
-        return any(pattern in context_lower for pattern in notable_patterns)
-    
-    def _is_common_word(self, word: str) -> bool:
-        """Détecte les mots courants qui ne sont pas des prénoms"""
-        common_words = {
-            'grâce', 'jour', 'mars', 'nom', 'dieu', 'sans', 'aucune', 'opposition',
-            'décès', 'naissance', 'église', 'chapelle', 'siège', 'roi', 'dans',
-            'avec', 'pour', 'sur', 'sous', 'mais', 'donc', 'puis', 'ainsi'
-        }
-        return word.lower() in common_words
-    
-    def _deduplicate_persons(self, persons: List[Dict]) -> List[Dict]:
-        """Déduplication des personnes avec prénoms multiples"""
-        if not persons:
-            return []
-        
-        # Grouper par nom complet normalisé
-        name_groups = {}
-        for person in persons:
-            # Normaliser en ignorant l'ordre des prénoms
-            prenoms_set = set(person.get('prenoms', [person.get('prenom', '')]))
-            nom = person.get('nom', '')
+        for personne in personnes:
+            # Clé de déduplication basée sur nom normalisé
+            nom_normalise = re.sub(r'\s+', ' ', personne['nom_complet'].lower().strip())
             
-            # Clé basée sur les prénoms (sans ordre) + nom
-            key = f"{'_'.join(sorted(prenoms_set))}_{nom}".lower()
-            
-            if key not in name_groups:
-                name_groups[key] = []
-            name_groups[key].append(person)
-        
-        # Pour chaque groupe, garder la version la plus complète
-        deduplicated = []
-        for key, group in name_groups.items():
-            if len(group) == 1:
-                deduplicated.append(group[0])
+            if nom_normalise in personnes_uniques:
+                # Conserver la version avec le plus d'informations
+                existante = personnes_uniques[nom_normalise]
+                if (personne.get('titre') and not existante.get('titre')) or \
+                   (personne.get('correction_ocr_appliquee') and not existante.get('correction_ocr_appliquee')):
+                    personnes_uniques[nom_normalise] = personne
             else:
-                # Prendre celle avec le plus de prénoms et d'attributs
-                best = max(group, key=lambda p: (
-                    len(p.get('prenoms', [])),
-                    len(p.get('professions', [])),
-                    len(p.get('terres', [])),
-                    1 if p.get('statut') else 0
-                ))
-                deduplicated.append(best)
+                personnes_uniques[nom_normalise] = personne
         
-        return deduplicated
+        return list(personnes_uniques.values())
+    
+    def _valider_personnes_extraites(self, personnes: List[Dict]) -> List[Dict]:
+        """Validation finale des personnes extraites"""
+        
+        personnes_valides = []
+        
+        for personne in personnes:
+            # Vérifications de base
+            if not personne.get('nom_complet') or len(personne['nom_complet']) < 2:
+                self.stats['erreurs_non_corrigees'] += 1
+                continue
+            
+            # Vérifier que la correction n'a pas créé d'incohérence
+            if personne.get('correction_ocr_appliquee'):
+                nom_corrige = personne['nom_complet']
+                if not self._est_nom_valide(nom_corrige):
+                    self.stats['erreurs_non_corrigees'] += 1
+                    continue
+            
+            personnes_valides.append(personne)
+        
+        return personnes_valides
     
     def get_enhanced_statistics(self) -> Dict:
-        """Retourne les statistiques étendues"""
-        base_stats = {
-            'names_extracted': self.stats['names_extracted'],
-            'multiple_prenoms_found': self.stats['multiple_prenoms_found'],
-            'extended_relations_found': self.stats['extended_relations_found'],
-            'sources_extracted': self.stats['sources_extracted'],
-            'cache_hits': self.stats['cache_hits'],
-            'cache_misses': self.stats['cache_misses'],
-            'cache_hit_rate': (self.stats['cache_hits'] / 
-                             max(1, self.stats['cache_hits'] + self.stats['cache_misses'])) * 100
+        """Statistiques enrichies avec informations de correction"""
+        
+        stats_base = {
+            'noms_extraits': self.stats['noms_extraits'],
+            'corrections_ocr_appliquees': self.stats['corrections_ocr_appliquees'],
+            'noms_tronques_corriges': self.stats['noms_tronques_corriges'],
+            'erreurs_non_corrigees': self.stats['erreurs_non_corrigees'],
+            'taux_correction': 0.0,
+            'qualite_estimee': 0.0
         }
         
-        return base_stats
-
-# Test du système amélioré
-if __name__ == "__main__":
-    print("=== TEST NAME EXTRACTOR AMÉLIORÉ ===")
+        if stats_base['noms_extraits'] > 0:
+            stats_base['taux_correction'] = (
+                stats_base['corrections_ocr_appliquees'] / stats_base['noms_extraits']
+            ) * 100
+            
+            stats_base['qualite_estimee'] = (
+                (stats_base['noms_extraits'] - stats_base['erreurs_non_corrigees']) /
+                stats_base['noms_extraits']
+            ) * 100
+        
+        return stats_base
     
+    def reset_statistics(self):
+        """Remet à zéro les statistiques"""
+        self.stats = {
+            'noms_extraits': 0,
+            'corrections_ocr_appliquees': 0,
+            'noms_tronques_corriges': 0,
+            'erreurs_non_corrigees': 0
+        }
+        self._correction_cache.clear()
+
+# === TESTS ET VALIDATION ===
+
+if __name__ == "__main__":
     from config.settings import ParserConfig
     
+    # Test du NameExtractor amélioré
     config = ParserConfig()
     extractor = NameExtractor(config)
     
-    # Test avec prénoms multiples
+    # Texte de test avec erreurs OCR
     test_text = """
-    1677, 5 juillet, mariage de Jean Pierre Philippe Le Boucher, écuyer, 
-    sr de Bréville, avec Marie Anne Catherine Dupré, fille de Guillaume Dupré 
-    et de Françoise Martin. Parrain: Charles Antoine Le Maistre, 
-    cousin de Jean Pierre Philippe Le Boucher.
+    942,Jean Aiicelle,Jean,Aiicelle,1,Jean Aiicelle,Jean Aiicelle
+    8835,Jaeques- Roch Adam,Jaeques- Roch,Adam,1,Jaeques- Roch Adam
+    12412,Marguerite Ade-,Marguerite,Ade-,1,Marguerite Ade-
+    9311,Messire Henry Acher,Messire Henry,Acher,1,Messire Henry Acher
+    Catlierhie Aiimont et Franteois Guillaïune, parents de Marie- An
     """
     
-    source_ref = "Creully, BMS 1665-1701, p.34"
+    print("=== TEST NAME EXTRACTOR AMÉLIORÉ ===")
+    print(f"Texte de test:\n{test_text}\n")
     
-    print("Texte de test:")
-    print(test_text)
-    print(f"\nSource: {source_ref}")
+    # Extraction avec corrections
+    personnes = extractor.extract_complete_names_with_sources(
+        test_text, "Test OCR", 1
+    )
     
-    # Extraction
-    persons = extractor.extract_complete_names_with_sources(test_text, source_ref, 34)
-    
-    print(f"\n=== RÉSULTATS ({len(persons)} personnes) ===")
-    
-    for i, person in enumerate(persons, 1):
-        print(f"\n{i}. {person['nom_complet']}")
-        print(f"   Prénoms: {person.get('prenoms', [])}")
-        print(f"   Nom: {person['nom']}")
-        if person.get('professions'):
-            print(f"   Professions: {person['professions']}")
-        if person.get('statut'):
-            print(f"   Statut: {person['statut']}")
-        if person.get('terres'):
-            print(f"   Terres: {person['terres']}")
-        if person.get('relations'):
-            print(f"   Relations: {len(person['relations'])}")
-            for rel in person['relations']:
-                print(f"     - {rel['type']}: {rel.get('avec', rel.get('context', ''))}")
-        if person.get('source_reference'):
-            print(f"   Source: {person['source_reference']}")
+    print(f"=== RÉSULTATS ({len(personnes)} personnes) ===")
+    for i, personne in enumerate(personnes, 1):
+        print(f"{i}. {personne['nom_complet']}")
+        if personne.get('correction_ocr_appliquee'):
+            print(f"   ✅ Corrigé de: '{personne['nom_original']}'")
+        if personne.get('titre'):
+            print(f"   Titre: {personne['titre']}")
     
     # Statistiques
     stats = extractor.get_enhanced_statistics()
     print(f"\n=== STATISTIQUES ===")
     for key, value in stats.items():
-        print(f"{key}: {value}")
-    
-    print("\nTest terminé!")
+        if isinstance(value, float):
+            print(f"{key}: {value:.1f}%")
+        else:
+            print(f"{key}: {value}")

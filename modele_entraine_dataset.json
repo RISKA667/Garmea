@@ -1,0 +1,314 @@
+{
+  "version": "1.0.0",
+  "date_entrainement": "2025-06-15T03:08:56.661608",
+  "dataset_utilise": "2 exemples",
+  "corrections_ocr": {
+    "estre": "être",
+    "nuict": "nuit",
+    "procla-mations": "proclamations",
+    "inh.": "inhumation",
+    "ct": "comte",
+    "demy": "demi",
+    "chrestiens": "chrétiens",
+    "Lill-bonne": "Lillebonne",
+    "Monsr": "Monsieur",
+    "Anthoisne": "Antoine",
+    "d'Har-court": "d'Harcourt",
+    "père": "père",
+    "estant": "étant",
+    "chés": "chez",
+    "faict": "fait",
+    "mercredy": "mercredi",
+    "demerer": "demeurer",
+    "Roys": "Rois",
+    "évesché": "évêché",
+    "sr": "sieur",
+    "sixiesme": "sixième",
+    "St-Lambert": "Saint-Lambert",
+    "aud.": "audit",
+    "ceste": "cette",
+    "mère": "mère",
+    "babtesme": "baptême",
+    "Jean-Bap-tiste": "Jean-Baptiste",
+    "feste": "fête"
+  },
+  "patterns_noms": [
+    {
+      "nom_complet": "Anne-Pierre d'HARCOURT",
+      "nom_famille": "HARCOURT",
+      "prenoms": [
+        "Anne-Pierre"
+      ],
+      "format": "PRENOMS NOM_FAMILLE_MAJUSCULE"
+    },
+    {
+      "nom_complet": "Jean-Baptiste BERTHAULT",
+      "nom_famille": "BERTHAULT",
+      "prenoms": [
+        "Jean-Baptiste"
+      ],
+      "format": "PRENOMS NOM_FAMILLE_MAJUSCULE"
+    },
+    {
+      "nom_complet": "Louis François LE HARIVEL",
+      "nom_famille": "LE HARIVEL",
+      "prenoms": [
+        "Louis",
+        "François"
+      ],
+      "format": "PRENOMS NOM_FAMILLE_MAJUSCULE"
+    },
+    {
+      "nom_complet": "Henri-François LE VAILLANT",
+      "nom_famille": "LE VAILLANT",
+      "prenoms": [
+        "Henri-François"
+      ],
+      "format": "PRENOMS NOM_FAMILLE_MAJUSCULE"
+    },
+    {
+      "nom_complet": "Jean LE MAZURIER",
+      "nom_famille": "LE MAZURIER",
+      "prenoms": [
+        "Jean"
+      ],
+      "format": "PRENOMS NOM_FAMILLE_MAJUSCULE"
+    },
+    {
+      "nom_complet": "Jean-François PATRY",
+      "nom_famille": "PATRY",
+      "prenoms": [
+        "Jean-François"
+      ],
+      "format": "PRENOMS NOM_FAMILLE_MAJUSCULE"
+    },
+    {
+      "nom_complet": "Jean PELLERIN",
+      "nom_famille": "PELLERIN",
+      "prenoms": [
+        "Jean"
+      ],
+      "format": "PRENOMS NOM_FAMILLE_MAJUSCULE"
+    },
+    {
+      "nom_complet": "Thomas JEAN",
+      "nom_famille": "JEAN",
+      "prenoms": [
+        "Thomas"
+      ],
+      "format": "PRENOMS NOM_FAMILLE_MAJUSCULE"
+    },
+    {
+      "nom_complet": "Jacques GUILLEBERT",
+      "nom_famille": "GUILLEBERT",
+      "prenoms": [
+        "Jacques"
+      ],
+      "format": "PRENOMS NOM_FAMILLE_MAJUSCULE"
+    },
+    {
+      "nom_complet": "Michel BLAIS",
+      "nom_famille": "BLAIS",
+      "prenoms": [
+        "Michel"
+      ],
+      "format": "PRENOMS NOM_FAMILLE_MAJUSCULE"
+    },
+    {
+      "nom_complet": "Perrine EULDE",
+      "nom_famille": "EULDE",
+      "prenoms": [
+        "Perrine"
+      ],
+      "format": "PRENOMS NOM_FAMILLE_MAJUSCULE"
+    },
+    {
+      "nom_complet": "Marie CHEVAL",
+      "nom_famille": "CHEVAL",
+      "prenoms": [
+        "Marie"
+      ],
+      "format": "PRENOMS NOM_FAMILLE_MAJUSCULE"
+    }
+  ],
+  "patterns_relations": [
+    {
+      "type": "filiation",
+      "personne": "Henri-François LE VAILLANT",
+      "relation_avec": "François LE VAILLANT",
+      "pattern_textuel": ""
+    },
+    {
+      "type": "filiation",
+      "personne": "Jean LE MAZURIER",
+      "relation_avec": "François LE MAZURIER",
+      "pattern_textuel": ""
+    },
+    {
+      "type": "filiation",
+      "personne": "Jacques GUILLEBERT",
+      "relation_avec": "Pierre GUILLEBERT",
+      "pattern_textuel": ""
+    },
+    {
+      "type": "mariage",
+      "personne": "Perrine EULDE",
+      "relation_avec": "Matin de LORME",
+      "pattern_textuel": "femme de Matin de Lorme"
+    }
+  ],
+  "patterns_titres": {
+    "duc d'Harcourt": "duc",
+    "pair de France": "pair de France",
+    "comte de Lillebonne": "comte",
+    "garde de l'Oriflamme": "garde de l'Oriflamme",
+    "chevalier des ordres du Roi": "chevalier",
+    "lieutenant général": "lieutenant général",
+    "gouverneur général de Normandie": "gouverneur général de Normandie",
+    "écuyer": "écuyer",
+    "sieur de Saint-Lambert": "sieur"
+  },
+  "patterns_dates": [
+    {
+      "date_originale": "1770-1778",
+      "format_detecte": "periode_annees",
+      "contexte": "genealogique"
+    },
+    {
+      "date_originale": "1770-1778",
+      "format_detecte": "periode_annees",
+      "contexte": "genealogique"
+    },
+    {
+      "date_originale": "1770-1778",
+      "format_detecte": "periode_annees",
+      "contexte": "genealogique"
+    },
+    {
+      "date_originale": "1770",
+      "format_detecte": "annee",
+      "contexte": "genealogique"
+    },
+    {
+      "date_originale": "1770",
+      "format_detecte": "annee",
+      "contexte": "genealogique"
+    },
+    {
+      "date_originale": "1682",
+      "format_detecte": "annee",
+      "contexte": "genealogique"
+    },
+    {
+      "date_originale": "1644-1674",
+      "format_detecte": "periode_annees",
+      "contexte": "genealogique"
+    },
+    {
+      "date_originale": "1644-1674",
+      "format_detecte": "periode_annees",
+      "contexte": "genealogique"
+    },
+    {
+      "date_originale": "06-02-1646",
+      "format_detecte": "jj-mm-aaaa",
+      "contexte": "genealogique"
+    },
+    {
+      "date_originale": "16-05-1649",
+      "format_detecte": "jj-mm-aaaa",
+      "contexte": "genealogique"
+    },
+    {
+      "date_originale": "1655",
+      "format_detecte": "annee",
+      "contexte": "genealogique"
+    }
+  ],
+  "statistiques": {
+    "exemples_traites": 2,
+    "corrections_ocr_decouvertes": 29,
+    "patterns_noms_appris": 12,
+    "patterns_relations_appris": 4,
+    "personnes_extraites": 12
+  },
+  "config_recommandee": {
+    "corrections_ocr": {
+      "estre": "être",
+      "nuict": "nuit",
+      "procla-mations": "proclamations",
+      "inh.": "inhumation",
+      "ct": "comte",
+      "demy": "demi",
+      "chrestiens": "chrétiens",
+      "Lill-bonne": "Lillebonne",
+      "Monsr": "Monsieur",
+      "Anthoisne": "Antoine",
+      "d'Har-court": "d'Harcourt",
+      "estant": "étant",
+      "chés": "chez",
+      "faict": "fait",
+      "mercredy": "mercredi",
+      "demerer": "demeurer",
+      "Roys": "Rois",
+      "évesché": "évêché",
+      "sr": "sieur",
+      "sixiesme": "sixième",
+      "St-Lambert": "Saint-Lambert",
+      "aud.": "audit",
+      "ceste": "cette",
+      "babtesme": "baptême",
+      "Jean-Bap-tiste": "Jean-Baptiste",
+      "feste": "fête"
+    },
+    "regles_titres": {
+      "duc d'Harcourt": "duc",
+      "pair de France": "pair de France",
+      "comte de Lillebonne": "comte",
+      "garde de l'Oriflamme": "garde de l'Oriflamme",
+      "chevalier des ordres du Roi": "chevalier",
+      "lieutenant général": "lieutenant général",
+      "gouverneur général de Normandie": "gouverneur général de Normandie",
+      "écuyer": "écuyer",
+      "sieur de Saint-Lambert": "sieur"
+    },
+    "format_noms": {
+      "nom_famille_majuscule": true,
+      "format_standard": "PRENOMS NOM_FAMILLE",
+      "particules_supportees": [
+        "de",
+        "du",
+        "des",
+        "le",
+        "la",
+        "les"
+      ]
+    },
+    "patterns_relations": [
+      "(\\w+),?\\s*fils de\\s+(\\w+)",
+      "(\\w+),?\\s*(?:femme|épouse) de\\s+(\\w+)",
+      "(\\w+),?\\s*fille de\\s+(\\w+)"
+    ],
+    "abreviations_historiques": {
+      "sr": "sieur",
+      "sgr": "seigneur",
+      "éc.": "écuyer",
+      "ec.": "écuyer",
+      "ct": "comte",
+      "Ct": "comte",
+      "inh.": "inhumation",
+      "bapt.": "baptême",
+      "mar.": "mariage"
+    },
+    "estimation_dates": {
+      "age_moyen_apparition": 30,
+      "formule_naissance": "date_document - age_moyen"
+    },
+    "regles_titres_normalisation": {
+      "duc": "minuscule",
+      "comte": "minuscule",
+      "sieur": "minuscule",
+      "seigneur": "minuscule"
+    }
+  }
+}
