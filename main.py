@@ -1,18 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-main.py - Parseur généalogique principal pour registres paroissiaux
-Version complètement corrigée et optimisée avec intégration OCR
-
-Usage:
-    python main.py [fichier] [options]
-    python main.py demo  # Mode démonstration
-    python main.py --help  # Aide complète
-
-Auteur: Système Garméa - Parser Généalogique Avancé
-Version: 3.0.0
-"""
-
 import argparse
 import json
 import logging
@@ -25,107 +10,66 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any, Tuple
 import warnings
-
-# Configuration des warnings
 warnings.filterwarnings('ignore', category=UserWarning)
 
-# === IMPORTS CONDITIONNELS ===
-
-# PyMuPDF pour PDF
 try:
     import fitz
     HAS_PYMUPDF = True
 except ImportError:
     HAS_PYMUPDF = False
 
-# Parsers Garméa (avec fallbacks si modules manquants)
 try:
     from parsers.text_parser import TextParser
     from parsers.name_extractor import NameExtractor  
     from database.person_manager import PersonManager
     HAS_PARSERS = True
 except ImportError as e:
-    print(f"⚠️  Modules parsers manquants: {e}")
+    print(f"Modules parsers manquants: {e}")
     HAS_PARSERS = False
 
-# === CONFIGURATION ET CONSTANTES ===
 
 class Config:
-    """Configuration centralisée de l'application"""
-    
-    # Paths par défaut
     DEFAULT_OUTPUT_DIR = Path("output")
     DEFAULT_LOGS_DIR = Path("logs")
     DEFAULT_CONFIG_FILE = Path("config/settings.json")
-    
-    # Limites de traitement
     MAX_PDF_PAGES = 500
-    MAX_TEXT_LENGTH = 1_000_000  # 1M caractères
-    CHUNK_SIZE = 100_000  # Taille des chunks
-    
-    # Performance
+    MAX_TEXT_LENGTH = 1_000_000
+    CHUNK_SIZE = 100_000
     CACHE_SIZE = 5000
     ENABLE_OCR_CORRECTIONS = True
     ENABLE_VALIDATION = True
-    
-    # Formats supportés
     SUPPORTED_TEXT_FORMATS = {'.txt', '.md', '.rtf'}
     SUPPORTED_PDF_FORMATS = {'.pdf'}
     
     @classmethod
     def get_all_supported_formats(cls) -> set:
-        """Retourne tous les formats supportés"""
         return cls.SUPPORTED_TEXT_FORMATS | cls.SUPPORTED_PDF_FORMATS
-
-# === GESTION DU LOGGING ===
-
-class LoggingSetup:
-    """Configuration centralisée du logging"""
     
+class LoggingSetup:
     @staticmethod
     def setup_logging(verbose: bool = False, log_file: Optional[str] = None) -> logging.Logger:
-        """Configure le système de logging"""
-        
-        # Créer le répertoire de logs
         Config.DEFAULT_LOGS_DIR.mkdir(exist_ok=True)
-        
-        # Configuration du niveau
         level = logging.DEBUG if verbose else logging.INFO
-        
-        # Format des messages
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
+            datefmt='%Y-%m-%d %H:%M:%S')
         
-        # Logger principal
         logger = logging.getLogger('garmeae_parser')
         logger.setLevel(level)
-        
-        # Éviter la duplication des handlers
         if logger.handlers:
             logger.handlers.clear()
-        
-        # Handler console
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(level)
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
-        
-        # Handler fichier
         if log_file:
             file_handler = logging.FileHandler(log_file, encoding='utf-8')
             file_handler.setLevel(logging.DEBUG)
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
-        
         return logger
 
-# === LECTEUR PDF AMÉLIORÉ ===
-
 class EnhancedPDFReader:
-    """Lecteur PDF optimisé pour documents généalogiques"""
-    
     def __init__(self, logger: Optional[logging.Logger] = None):
         self.logger = logger or logging.getLogger(__name__)
         self.stats = {
@@ -138,14 +82,10 @@ class EnhancedPDFReader:
     
     @property
     def can_read_pdf(self) -> bool:
-        """Vérifie si la lecture PDF est disponible"""
         return HAS_PYMUPDF
     
     def get_pdf_info(self, pdf_path: Union[str, Path]) -> Dict[str, Any]:
-        """Récupère les informations du PDF"""
-        
         pdf_path = Path(pdf_path)
-        
         basic_info = {
             'file_name': pdf_path.name,
             'file_size_mb': pdf_path.stat().st_size / (1024 * 1024),
@@ -163,10 +103,9 @@ class EnhancedPDFReader:
                     'pages': len(doc),
                     'can_process': True,
                     'metadata': doc.metadata,
-                    'estimated_time_minutes': len(doc) * 0.05  # 3 secondes par page
+                    'estimated_time_minutes': len(doc) * 0.05
                 })
                 
-                # Vérifier si le PDF contient du texte
                 sample_page = doc[0] if len(doc) > 0 else None
                 if sample_page:
                     sample_text = sample_page.get_text()
@@ -176,56 +115,29 @@ class EnhancedPDFReader:
         except Exception as e:
             basic_info['error'] = str(e)
             self.logger.error(f"Erreur lecture info PDF: {e}")
-        
         return basic_info
     
     def read_pdf_file(self, pdf_path: Union[str, Path], 
                      max_pages: Optional[int] = None,
                      page_range: Optional[Tuple[int, int]] = None,
                      progress_callback: Optional[callable] = None) -> str:
-        """
-        Lit un fichier PDF avec options avancées
-        
-        Args:
-            pdf_path: Chemin vers le PDF
-            max_pages: Nombre maximum de pages
-            page_range: Tuple (début, fin) 1-indexé
-            progress_callback: Fonction appelée pour le progrès
-            
-        Returns:
-            str: Contenu textuel extrait
-            
-        Raises:
-            FileNotFoundError: Fichier non trouvé
-            ImportError: PyMuPDF non disponible
-            ValueError: Paramètres invalides
-        """
-        
         start_time = time.time()
         pdf_path = Path(pdf_path)
-        
-        # Validations
         if not pdf_path.exists():
             raise FileNotFoundError(f"Fichier PDF introuvable: {pdf_path}")
         
         if not self.can_read_pdf:
             raise ImportError("PyMuPDF requis mais non disponible. Installez avec: pip install PyMuPDF")
         
-        self.logger.info(f"📖 Lecture PDF: {pdf_path.name}")
+        self.logger.info(f"Lecture PDF: {pdf_path.name}")
         
         try:
             with fitz.open(str(pdf_path)) as doc:
                 total_pages = len(doc)
-                self.logger.info(f"📄 Document: {total_pages} pages")
-                
-                # Calculer la plage de pages
+                self.logger.info(f"Document: {total_pages} pages")
                 start_page, end_page = self._calculate_page_range(
-                    total_pages, max_pages, page_range
-                )
-                
-                self.logger.info(f"📊 Traitement pages {start_page + 1} à {end_page}")
-                
-                # Extraction du texte
+                    total_pages, max_pages, page_range)
+                self.logger.info(f"Traitement pages {start_page + 1} à {end_page}")
                 text_parts = []
                 pages_processed = 0
                 
@@ -235,7 +147,6 @@ class EnhancedPDFReader:
                         page_text = page.get_text()
                         
                         if page_text.strip():
-                            # Ajouter séparateur de page
                             text_parts.append(f"\n--- PAGE {page_num + 1} ---\n")
                             text_parts.append(page_text)
                         else:
@@ -244,12 +155,10 @@ class EnhancedPDFReader:
                         
                         pages_processed += 1
                         
-                        # Callback de progrès
                         if progress_callback:
                             progress = (pages_processed / (end_page - start_page)) * 100
                             progress_callback(progress, page_num + 1, end_page)
                         
-                        # Log de progression
                         if pages_processed % 25 == 0:
                             self.logger.info(f"⏳ Progression: {pages_processed}/{end_page - start_page} pages")
                         
@@ -258,10 +167,7 @@ class EnhancedPDFReader:
                         self.stats['errors'] += 1
                         continue
                 
-                # Assemblage final
                 full_text = '\n'.join(text_parts)
-                
-                # Mise à jour des statistiques
                 self.stats.update({
                     'pages_processed': pages_processed,
                     'total_chars': len(full_text),
@@ -310,29 +216,16 @@ class EnhancedPDFReader:
         
         return stats
 
-# === PARSEUR PRINCIPAL AMÉLIORÉ ===
-
 class EnhancedGenealogyParser:
     """Parseur généalogique principal avec intégration OCR complète"""
     
     def __init__(self, config_path: Optional[str] = None, 
                  logger: Optional[logging.Logger] = None):
-        """
-        Initialise le parseur avec configuration avancée
-        
-        Args:
-            config_path: Chemin vers fichier de configuration
-            logger: Logger personnalisé
-        """
         self.logger = logger or logging.getLogger(__name__)
         self.config = self._load_config(config_path)
-        
-        # Initialisation des composants (lazy loading)
         self._text_parser = None
         self._name_extractor = None  
         self._person_manager = None
-        
-        # Statistiques globales
         self.stats = {
             'documents_processed': 0,
             'total_persons': 0,
@@ -404,20 +297,7 @@ class EnhancedGenealogyParser:
     def process_document(self, text: str, 
                         source_info: Optional[Dict[str, Any]] = None,
                         progress_callback: Optional[callable] = None) -> Dict[str, Any]:
-        """
-        Traite un document complet avec toutes les améliorations
-        
-        Args:
-            text: Texte à analyser
-            source_info: Informations sur la source
-            progress_callback: Fonction de progression
-            
-        Returns:
-            Dict: Rapport structuré complet
-        """
         start_time = time.time()
-        
-        # Informations par défaut
         source_info = source_info or {
             'lieu': 'Document généalogique',
             'type': 'registre_paroissial',
@@ -444,7 +324,6 @@ class EnhancedGenealogyParser:
                 'errors': []
             }
             
-            # === ÉTAPE 1: NORMALISATION DU TEXTE ===
             self._update_progress(progress_callback, 10, "Normalisation du texte...")
             
             try:
@@ -543,10 +422,7 @@ class EnhancedGenealogyParser:
                 self.logger.error(f"Erreur création personnes: {e}")
                 report['errors'].append(f"Création personnes: {str(e)}")
             
-            # === ÉTAPE 5: FINALISATION ===
             self._update_progress(progress_callback, 90, "Finalisation...")
-            
-            # Statistiques finales
             processing_time = time.time() - start_time
             self.stats.update({
                 'documents_processed': self.stats['documents_processed'] + 1,
@@ -564,7 +440,7 @@ class EnhancedGenealogyParser:
             
             self._update_progress(progress_callback, 100, "Traitement terminé!")
             
-            self.logger.info(f"✅ Traitement terminé en {processing_time:.2f}s")
+            self.logger.info(f"Traitement terminé en {processing_time:.2f}s")
             return report
             
         except Exception as e:
@@ -601,7 +477,6 @@ class EnhancedGenealogyParser:
             }
         }
         
-        # Ajouter stats des parsers si disponibles
         if HAS_PARSERS:
             try:
                 if self._text_parser:
@@ -616,18 +491,6 @@ class EnhancedGenealogyParser:
     def export_results(self, report: Dict[str, Any], 
                       output_dir: Path, 
                       formats: List[str] = None) -> Dict[str, str]:
-        """
-        Exporte les résultats dans différents formats
-        
-        Args:
-            report: Rapport à exporter
-            output_dir: Répertoire de sortie
-            formats: Liste des formats ('json', 'txt', 'gedcom')
-            
-        Returns:
-            Dict: Chemins des fichiers créés
-        """
-        
         formats = formats or ['json']
         output_dir.mkdir(parents=True, exist_ok=True)
         
@@ -929,8 +792,6 @@ def check_dependencies() -> Dict[str, bool]:
     return deps
 
 def run_integrated_tests() -> bool:
-    """Lance les tests intégrés"""
-    
     print("🧪 TESTS INTÉGRÉS")
     print("=" * 40)
     
@@ -1008,12 +869,11 @@ def run_demo() -> Dict[str, Any]:
     avec Marie Durand, fille de Nicolas Durand, marchand.
     """
     
-    print("📄 Texte d'exemple:")
+    print("Texte d'exemple:")
     print("-" * 50)
     print(sample_text[:300] + "..." if len(sample_text) > 300 else sample_text)
     print("-" * 50)
     
-    # Traitement
     try:
         parser = EnhancedGenealogyParser()
         
@@ -1025,21 +885,20 @@ def run_demo() -> Dict[str, Any]:
         
         progress = ProgressTracker(show_progress=True)
         
-        print("\n🔄 Traitement en cours...")
+        print("\nTraitement en cours...")
         report = parser.process_document(
             sample_text, 
             source_info,
             progress_callback=progress.update
         )
         
-        print("\n📊 RÉSULTATS:")
+        print("\nRÉSULTATS:")
         print("=" * 30)
         
-        # Affichage simplifié des résultats
         if 'text_normalization' in report['results']:
             norm = report['results']['text_normalization']
-            print(f"📝 Corrections OCR: {len(norm.get('ocr_corrections', []))}")
-            print(f"📖 Abréviations: {len(norm.get('abbreviations_expanded', []))}")
+            print(f"Corrections OCR: {len(norm.get('ocr_corrections', []))}")
+            print(f"Abréviations: {len(norm.get('abbreviations_expanded', []))}")
         
         if 'name_extraction' in report['results']:
             names = report['results']['name_extraction']
@@ -1048,33 +907,27 @@ def run_demo() -> Dict[str, Any]:
             # Afficher quelques noms
             sample_names = names.get('sample_names', [])[:5]
             if sample_names:
-                print("\n🏷️ Noms trouvés:")
+                print("\nNoms trouvés:")
                 for name in sample_names:
                     print(f"   • {name}")
         
         processing_time = report['processing_metadata'].get('processing_time_seconds', 0)
-        print(f"\n⏱️ Temps de traitement: {processing_time:.2f}s")
+        print(f"\n⏱Temps de traitement: {processing_time:.2f}s")
         
         return report
         
     except Exception as e:
-        print(f"❌ Erreur démonstration: {e}")
+        print(f"Erreur démonstration: {e}")
         if '--verbose' in sys.argv:
             traceback.print_exc()
         return {'error': str(e)}
 
 def main():
-    """Fonction principale"""
-    
-    # Parser d'arguments
     parser = create_argument_parser()
     args = parser.parse_args()
-    
-    # Configuration du logging
     log_file = args.log_file or Config.DEFAULT_LOGS_DIR / "genealogy_parser.log"
     logger = LoggingSetup.setup_logging(args.verbose, log_file)
     
-    # Actions spéciales
     if args.check_deps:
         check_dependencies()
         return
@@ -1084,20 +937,18 @@ def main():
         sys.exit(0 if success else 1)
     
     if not args.input_file:
-        print("❌ Aucun fichier spécifié. Utilisez --help pour l'aide.")
+        print("Aucun fichier spécifié. Utilisez --help pour l'aide.")
         sys.exit(1)
     
     if args.input_file.lower() == 'demo':
         run_demo()
         return
     
-    # Validation du fichier d'entrée
     input_path = Path(args.input_file)
     if not input_path.exists():
-        print(f"❌ Fichier non trouvé: {input_path}")
+        print(f"Fichier non trouvé: {input_path}")
         sys.exit(1)
     
-    # Vérification du format
     if input_path.suffix.lower() not in Config.get_all_supported_formats():
         print(f"❌ Format non supporté: {input_path.suffix}")
         print(f"Formats supportés: {', '.join(Config.get_all_supported_formats())}")
@@ -1147,54 +998,40 @@ def main():
                     start, end = map(int, args.pdf_range.split('-'))
                     pdf_options['page_range'] = (start, end)
                 except ValueError:
-                    print(f"❌ Format de plage invalide: {args.pdf_range}")
+                    print(f"Format de plage invalide: {args.pdf_range}")
                     sys.exit(1)
             
-            # Lecture PDF avec progression
             progress = ProgressTracker(not args.no_progress)
-            
-            print(f"📖 Lecture PDF: {input_path.name}")
+            print(f"Lecture PDF: {input_path.name}")
             text_content = pdf_reader.read_pdf_file(
                 input_path, 
                 progress_callback=progress.update,
-                **pdf_options
-            )
+                **pdf_options)
             
-            # Stats PDF
             pdf_stats = pdf_reader.get_statistics()
             logger.info(f"PDF traité: {pdf_stats['pages_processed']} pages")
             source_info.update(pdf_stats)
         
         else:
-            # Lecture fichier texte
-            print(f"📄 Lecture fichier texte: {input_path.name}")
-            
+            print(f"Lecture fichier texte: {input_path.name}")
             with safe_file_operation(input_path, "lecture"):
                 with open(input_path, 'r', encoding='utf-8') as f:
                     text_content = f.read()
         
-        # Validation du contenu
         if not text_content.strip():
-            print("❌ Aucun contenu textuel extrait!")
+            print("Aucun contenu textuel extrait!")
             sys.exit(1)
         
-        print(f"✅ Contenu extrait: {len(text_content):,} caractères")
-        
-        # === TRAITEMENT GÉNÉALOGIQUE ===
-        
-        # Configuration personnalisée
+        print(f"Contenu extrait: {len(text_content):,} caractères")
         config_overrides = {}
         if args.no_ocr:
             config_overrides['enable_ocr_corrections'] = False
         if args.chunk_size:
             config_overrides['chunk_size'] = args.chunk_size
         
-        # Création du parseur
         parser_instance = EnhancedGenealogyParser(args.config, logger)
         if config_overrides:
             parser_instance.config.update(config_overrides)
-        
-        # Traitement avec progression
         progress = ProgressTracker(not args.no_progress)
         
         print(f"\n🔄 Traitement généalogique...")
@@ -1204,79 +1041,67 @@ def main():
             progress_callback=progress.update
         )
         
-        # === EXPORT DES RÉSULTATS ===
-        
-        print(f"\n💾 Export des résultats...")
+        print(f"\nExport des résultats...")
         created_files = parser_instance.export_results(
             report, 
             output_dir, 
-            args.formats
-        )
+            args.formats)
         
-        # === AFFICHAGE DES RÉSULTATS ===
-        
-        print(f"\n📊 RÉSULTATS:")
+        print(f"\nRÉSULTATS:")
         print("=" * 50)
         
-        # Résumé principal
         if 'text_normalization' in report['results']:
             norm = report['results']['text_normalization']
             ocr_count = len(norm.get('ocr_corrections', []))
             abbrev_count = len(norm.get('abbreviations_expanded', []))
-            print(f"📝 Corrections OCR appliquées: {ocr_count}")
-            print(f"📖 Abréviations développées: {abbrev_count}")
+            print(f"Corrections OCR appliquées: {ocr_count}")
+            print(f"Abréviations développées: {abbrev_count}")
         
         if 'name_extraction' in report['results']:
             names = report['results']['name_extraction']
             total_names = names.get('total_names', 0)
             corrected_names = names.get('names_with_corrections', 0)
-            print(f"👥 Noms extraits: {total_names}")
-            print(f"✅ Noms corrigés automatiquement: {corrected_names}")
+            print(f"Noms extraits: {total_names}")
+            print(f"Noms corrigés automatiquement: {corrected_names}")
         
         if 'person_creation' in report['results']:
             persons = report['results']['person_creation']
             total_persons = persons.get('total_persons', 0)
-            print(f"🏛️ Personnes créées: {total_persons}")
+            print(f"Personnes créées: {total_persons}")
         
-        # Temps de traitement
         processing_time = report['processing_metadata'].get('processing_time_seconds', 0)
-        print(f"⏱️ Temps de traitement: {processing_time:.2f}s")
+        print(f"⏱Temps de traitement: {processing_time:.2f}s")
         
-        # Fichiers créés
         if created_files:
-            print(f"\n📁 Fichiers créés:")
+            print(f"\nFichiers créés:")
             for format_type, file_path in created_files.items():
                 print(f"   {format_type.upper()}: {file_path}")
         
-        # Erreurs
         if report.get('errors'):
-            print(f"\n⚠️ Erreurs rencontrées: {len(report['errors'])}")
+            print(f"\nErreurs rencontrées: {len(report['errors'])}")
             if args.verbose:
                 for error in report['errors']:
                     print(f"   • {error}")
         
-        # Statistiques détaillées si demandé
         if args.verbose:
-            print(f"\n📈 STATISTIQUES DÉTAILLÉES:")
+            print(f"\nSTATISTIQUES DÉTAILLÉES:")
             print("-" * 30)
             stats = report.get('statistics', {})
             print(json.dumps(stats, indent=2, ensure_ascii=False, default=str))
         
-        print(f"\n✅ Traitement terminé avec succès!")
+        print(f"\nTraitement terminé avec succès!")
         
     except KeyboardInterrupt:
-        print(f"\n⏹️ Traitement interrompu par l'utilisateur")
+        print(f"\n⏹Traitement interrompu par l'utilisateur")
         sys.exit(130)
     
     except Exception as e:
         logger.error(f"Erreur critique: {e}")
-        print(f"\n❌ Erreur: {e}")
+        print(f"\nErreur: {e}")
         
         if args.verbose:
             print("\n🔍 Détails de l'erreur:")
             traceback.print_exc()
-        
         sys.exit(1)
-
 if __name__ == "__main__":
     main()

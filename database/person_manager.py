@@ -1,4 +1,4 @@
-# database/person_manager.py - VERSION CORRIGÉE ET OPTIMISÉE
+# database/person_manager.py
 """
 Gestionnaire de personnes avec normalisation OCR intégrée
 Version finale corrigée avec toutes les dépendances et optimisations
@@ -111,7 +111,7 @@ class Person:
             dates.append(('décès', self.date_deces))
         
         # Logique de validation chronologique
-        # (Implémentation simplifiée)
+        
         pass
     
     def _infer_gender_from_names(self):

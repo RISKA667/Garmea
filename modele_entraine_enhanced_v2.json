@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "date_entrainement": "2025-06-15T03:27:28.877343",
+  "date_entrainement": "2025-07-02T02:01:49.476560",
   "configuration": {
     "vectorisation": true,
     "traitement_parallele": true,
@@ -9,12 +9,12 @@
   "dataset_info": {
     "nombre_exemples": 2,
     "types_documents": [
-      "registres_paroissiaux",
-      "pleds_seigneurie"
+      "pleds_seigneurie",
+      "registres_paroissiaux"
     ],
     "periodes_historiques": [
-      "XVIII_siecle",
-      "XVII_siecle"
+      "XVII_siecle",
+      "XVIII_siecle"
     ]
   },
   "apprentissages": {
@@ -353,7 +353,7 @@
     ]
   },
   "metriques": {
-    "temps_traitement": 0.23374533653259277,
+    "temps_traitement": 0.18267440795898438,
     "score_qualite_global": 3.45,
     "taux_validation": 0.75,
     "efficacite_cache": 0.0
@@ -445,9 +445,9 @@
     },
     "dates": {
       "formats_detectes": [
-        "annee",
         "jj-mm-aaaa",
-        "periode_annees"
+        "periode_annees",
+        "annee"
       ],
       "normalisation_automatique": true,
       "validation_coherence": true

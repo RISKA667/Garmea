@@ -1,0 +1,50 @@
+ID,Type_Relation,Personne_Principale,Personne_Liée_1,Personne_Liée_2,Rôle_1,Rôle_2,Source_Texte,Confiance
+230,Filiation,a bin,Jacques,,Père,Mère,"a- bin, fils de Jacques",0.5
+805,Filiation,a laville,Jacque,,Père,Mère,"a- laville, fils de Jacque",0.5
+2023,Filiation,a raville,feu Nicolas,,Père,Mère,"a- raville, fille de feu Nicolas",0.5
+797,Filiation,a été présenté sur les fonds de baptême un,Jean Andrieu,,Père,Mère,a été présenté sur les fonds de baptême un fils de Jean Andrieu,0.5
+120,Filiation,A'u bry,mêmes,,Père,Mère,"A'u- bry, fils des mêmes",0.5
+1342,Filiation,aas,feu Thomas Bénard,,Père,Mère,"aas, fils de feu Thomas Bénard",0.5
+2410,Filiation,abbé,feu messire Augustin,,Père,Mère,"abbé, fille de feu messire Augustin",0.5
+2457,Filiation,adjugé à Jeanne,Pierre Ancellé,,Père,Mère,"adjugé à Jeanne, fille de Pierre Ancellé",0.5
+2489,Filiation,aiorel,Pierre et de d',,Père,Mère,aiorel fille de Pierre et de d',0.5
+606,Filiation,alle,Charles Morin,,Père,Mère,"alle, fils de Charles Morin",0.5
+1995,Filiation,amoiselle Ma rie Aune Sibille Emilie de Pierrepont,Louis de Pierrepont,,Père,Mère,"amoiselle Ma- rie-Aune-Sibille-Emilie de Pierrepont, fille de Louis de Pierrepont",0.5
+2458,Filiation,Ancelle,Pierre,,Père,Mère,"Ancelle, fille de Pierre",0.5
+325,Filiation,ancien lieutenant de dra gons,feu Pierre de Tilly,,Père,Mère,"ancien lieutenant de dra- gons, fils de feu Pierre de Tilly",0.5
+1372,Filiation,Anne,Nicolas de Fouques,,Père,Mère,"Anne, fille de Nicolas de Fouques",0.5
+2537,Filiation,Anne Coliu',feu Gilles Colin,,Père,Mère,"Anne Coliu', fille de feu Gilles Colin",0.5
+1764,Filiation,Anne Denis,feu Cli,,Père,Mère,"Anne Denis, fille de feu Cli",0.5
+2238,Filiation,Anne Françoise Madeleine Costart,Nicolas François Costart,,Père,Mère,"Anne-Françoise-Madeleine Costart, fille de Nicolas-François Costart",0.5
+1624,Filiation,Anne Georges,Jacques Georges,,Père,Mère,"Anne Georges, fille de Jacques Georges",0.5
+2494,Filiation,anne Jeauue Flore Gosselin de Garcelles,feu liouis Gabriel et de feu Marie RosG de Couvain,,Père,Mère,"anne-Jeauue- Flore Gosselin de Garcelles, fille de feu liouis- Gabriel et de feu Marie-RosG de Couva",0.5
+60,Filiation,ans,Richard Voisvenel et de Marie Druel,,Père,Mère,"ans, fils de Richard Voisvenel et de Marie Druel",0.5
+257,Filiation,ans,Guillaume,,Père,Mère,"ans, fils de Guillaume",0.5
+347,Filiation,ans,feu Gaspard Os mont,,Père,Mère,"ans, fils de feu Gaspard Os- mont",0.5
+414,Filiation,ans,feu Gabriel,,Père,Mère,"ans, fils de feu Gabriel",0.5
+520,Filiation,ans,feu Georges,,Père,Mère,"ans, fils de feu Georges",0.5
+522,Filiation,ans,feu Philippe,,Père,Mère,"ans, fils de feu Philippe",0.5
+525,Filiation,ans,feu Jean Dagier,,Père,Mère,"ans, fils de feu Jean Dagier",0.5
+744,Filiation,ans,Coquerel,,Père,Mère,"ans, fils de Coquerel",0.5
+745,Filiation,ans,Philippe Morin,,Père,Mère,"ans, fils de Philippe Morin",0.5
+763,Filiation,ans,Jacques Le Cheva lier,,Père,Mère,"ans, fils de Jacques Le Cheva- lier",0.5
+810,Filiation,ans,Charles J,,Père,Mère,"ans, fils de Charles-J",0.5
+894,Filiation,ans,Nicolas Isa belle,,Père,Mère,"ans, fils de Nicolas Isa- belle",0.5
+1010,Filiation,ans,Pierre,,Père,Mère,"ans, fils de Pierre",0.5
+1101,Filiation,ans,Jean Daumalle et de feu Fi'ançoise Godillou,,Père,Mère,"ans, fils de Jean Daumalle et de feu Fi'ançoise Godillou",0.5
+1153,Filiation,ans,mêmes,,Père,Mère,"ans, fils des mêmes",0.5
+1163,Filiation,ans,Pierre Bénard,,Père,Mère,"ans, fiLs de Pierre Bénard",0.5
+1335,Filiation,ans,François,,Père,Mère,"ans, fils de François",0.5
+1450,Filiation,ans,Thomas,,Père,Mère,"ans, fille de Thomas",0.5
+1583,Filiation,ans,Jacques de Touehet,,Père,Mère,"ans, fille de Jacques de Touehet",0.5
+1651,Filiation,ans,Gabriel Louis de Marguerie,,Père,Mère,"ans, fille de Gabriel-Louis de Marguerie",0.5
+1697,Filiation,ans,feu Pien e et de Michelle Vattement,,Père,Mère,"ans, fille de feu Pien-e et de Michelle Vattement",0.5
+1705,Filiation,ans,feu Michel Des Jardins,,Père,Mère,"ans, fille de feu Michel Des Jardins",0.5
+1796,Filiation,ans,l'eu François,,Père,Mère,"ans, fille de l'eu François",0.5
+1797,Filiation,ans,Jacques,,Père,Mère,"ans, fille de Jacques",0.5
+1812,Filiation,ans,feu Jean Cauvet de Nerval,,Père,Mère,"ans, fille de feu Jean Cauvet de Nerval",0.5
+2020,Filiation,ans,Pierre Létot et de Marie Marguerite Boutry,,Père,Mère,"ans, fille de Pierre Létot et de Marie-Marguerite Boutry",0.5
+2065,Filiation,ans,Jean et de défunte d,,Père,Mère,"ans, fille de Jean et de défunte d",0.5
+2091,Filiation,ans,feu François Morin,,Père,Mère,"ans, fille de feu François Morin",0.5
+2109,Filiation,ans,feu Nicolas,,Père,Mère,"ans, fille de feu Nicolas",0.5
+2239,Filiation,ans,Jacques Des'ilez,,Père,Mère,"ans, fille de Jacques Des'ilez",0.5

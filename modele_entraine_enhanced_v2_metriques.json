@@ -1,11 +1,11 @@
 {
-  "timestamp": "2025-06-15T03:27:29.136225",
+  "timestamp": "2025-07-02T02:01:49.488552",
   "metriques": {
     "precision": 0.0,
     "recall": 0.0,
     "f1_score": 0.0,
     "nombre_extractions": 0,
-    "temps_traitement": 0.23374533653259277,
+    "temps_traitement": 0.18267440795898438,
     "patterns_nouveaux": 18,
     "corrections_nouvelles": 33,
     "score_qualite_global": 3.45,
