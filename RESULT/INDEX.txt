@@ -1,30 +1,27 @@
 INDEX DES FICHIERS EXPORTÉS
 ========================================
 
-Date d'export: 2025-07-02 01:59:40
+Date d'export: 2025-07-02 12:44:09
 Source: Smart PDF Analyzer v3.0.0
 
 FICHIERS CRÉÉS:
 --------------------
-FILIATIONS: filiations.csv
-MARIAGES: mariages.csv
-PARRAINAGES: parrainages.csv
 PERSONNES: personnes.csv
 RESUME: resume_general.csv
 CONSOLIDE: relations_consolidees.csv
 
 STATISTIQUES D'EXPORT:
 -------------------------
-Filiations Exportees: 2595
-Mariages Exportes: 741
-Parrainages Exportes: 8728
-Personnes Exportees: 12684
+Filiations Exportees: 0
+Mariages Exportes: 0
+Parrainages Exportes: 0
+Personnes Exportees: 15797
 
 STATISTIQUES GÉNÉRALES:
 ----------------------------
-Total relations extraites: 12064
+Total relations extraites: 0
 Pages analysées: 600
-Pages de registres: 418
+Pages de registres: 433
 
 DESCRIPTION DES FICHIERS:
 ------------------------------
