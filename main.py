@@ -19,7 +19,7 @@ except ImportError:
     HAS_PYMUPDF = False
 
 try:
-    from parsers.text_parser import TextParser
+    from parsers.base.text_parser import TextParser
     from parsers.name_extractor import NameExtractor  
     from database.person_manager import PersonManager
     HAS_PARSERS = True

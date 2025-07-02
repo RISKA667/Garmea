@@ -1,333 +1,356 @@
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Set, Tuple 
+from typing import Dict, List, Optional, Set, Tuple, Union
 from pathlib import Path
+import re
+import numpy as np
+from dataclasses import dataclass
+from multiprocessing import Pool
+from functools import partial
 
-from core.models import Person, ActeParoissial, ActeType, PersonStatus
-from config.settings import ParserConfig
+# Modèles de données optimisés
+@dataclass
+class GedcomDate:
+    day: Optional[int] = None
+    month: Optional[str] = None
+    year: Optional[int] = None
+    precision: str = "exact"  # exact, about, before, after
+    
+    def to_gedcom(self) -> str:
+        parts = []
+        if self.day:
+            parts.append(str(self.day))
+        if self.month:
+            parts.append(self.month)
+        if self.year:
+            parts.append(str(self.year))
+        return " ".join(parts) if parts else ""
 
 class GedcomExporter:
-    """Exporteur GEDCOM conforme aux standards généalogiques"""
+    """Exporteur GEDCOM haute performance avec vectorisation partielle"""
     
-    def __init__(self, config: ParserConfig):
+    # Mapping statique pour les conversions
+    FRENCH_TO_GEDCOM_MONTHS = {
+        'janvier': 'JAN', 'février': 'FEB', 'mars': 'MAR', 'avril': 'APR',
+        'mai': 'MAY', 'juin': 'JUN', 'juillet': 'JUL', 'août': 'AUG',
+        'septembre': 'SEP', 'octobre': 'OCT', 'novembre': 'NOV', 'décembre': 'DEC'
+    }
+    
+    GENDER_INFERENCE_RULES = {
+        'professions': {
+            'M': {'curé', 'prêtre', 'laboureur', 'maçon', 'charpentier'},
+            'F': {'fileuse', 'couturière', 'ménagère'}
+        },
+        'titles': {
+            'M': {PersonStatus.SIEUR, PersonStatus.SEIGNEUR, PersonStatus.ECUYER},
+            'F': {PersonStatus.DAME, PersonStatus.DEMOISELLE}
+        }
+    }
+    
+    def __init__(self, config: ParserConfig, parallel_processing: bool = True):
         self.config = config
+        self.parallel = parallel_processing
         self.logger = logging.getLogger(__name__)
         
-        # Compteurs pour les IDs GEDCOM
-        self.person_counter = 1
-        self.family_counter = 1
+        # Structures optimisées
+        self.person_id_map: np.ndarray = None  # Vectorisé pour les accès rapides
+        self.family_graph: Dict[Tuple[int, int], Set[int]] = {}  # Graphe familial
+        self.date_cache: Dict[str, GedcomDate] = {}  # Cache des dates parsées
         
-        # Mappings
-        self.person_id_map: Dict[int, str] = {}  # internal_id -> GEDCOM_id
-        self.family_id_map: Dict[tuple, str] = {}  # (husband_id, wife_id) -> GEDCOM_family_id
-        
+        # Compteurs
+        self.counters = {
+            'individuals': 0,
+            'families': 0,
+            'sources': 0,
+            'media': 0
+        }
+
     def export(self, persons: Dict[int, Person], actes: Dict[int, ActeParoissial], 
-               output_path: str) -> bool:
-        """Export principal vers fichier GEDCOM"""
+               output_path: Union[str, Path]) -> bool:
+        """Export principal optimisé"""
         try:
-            self.logger.info(f"Début export GEDCOM vers {output_path}")
+            output_path = Path(output_path)
+            self.logger.info(f"Initialisation de l'export GEDCOM vers {output_path}")
             
-            # Préparation des mappings
-            self._prepare_mappings(persons)
+            # Préparation des données vectorisées
+            self._prepare_data_structures(persons, actes)
             
-            # Écriture du fichier
+            # Export parallélisé si activé
             with open(output_path, 'w', encoding='utf-8') as f:
                 self._write_gedcom_header(f)
-                self._write_individuals(f, persons, actes)
-                self._write_families(f, persons, actes)
+                
+                if self.parallel:
+                    with Pool() as pool:
+                        # Écriture parallèle des individus
+                        chunks = self._chunk_persons(persons, chunk_size=1000)
+                        pool.map(partial(self._process_person_chunk, f=f), chunks)
+                        
+                        # Écriture des familles
+                        family_chunks = self._chunk_families(chunk_size=500)
+                        pool.map(partial(self._process_family_chunk, f=f), family_chunks)
+                else:
+                    self._write_individuals(f, persons, actes)
+                    self._write_families(f, persons, actes)
+                
                 self._write_gedcom_trailer(f)
             
-            self.logger.info(f"Export GEDCOM terminé: {len(persons)} personnes, {len(self.family_id_map)} familles")
+            self.logger.info(
+                f"Export réussi: {self.counters['individuals']} personnes, "
+                f"{self.counters['families']} familles, "
+                f"{self.counters['sources']} sources, "
+                f"{self.counters['media']} médias"
+            )
             return True
             
         except Exception as e:
-            self.logger.error(f"Erreur export GEDCOM: {e}")
+            self.logger.error(f"Erreur critique lors de l'export: {str(e)}", exc_info=True)
             return False
     
-    def _prepare_mappings(self, persons: Dict[int, Person]):
-        """Prépare les mappings ID internes -> IDs GEDCOM"""
+    def _prepare_data_structures(self, persons: Dict[int, Person], actes: Dict[int, ActeParoissial]):
+        """Prépare les structures de données optimisées"""
+        # Vectorisation des IDs
+        max_id = max(persons.keys()) if persons else 0
+        self.person_id_map = np.full(max_id + 1, '', dtype='U8')
+        
         for internal_id in persons.keys():
-            gedcom_id = f"I{self.person_counter:04d}"
-            self.person_id_map[internal_id] = gedcom_id
-            self.person_counter += 1
+            self.person_id_map[internal_id] = f"I{self.counters['individuals']:06d}"
+            self.counters['individuals'] += 1
+        
+        # Construction du graphe familial
+        self._build_family_graph(persons)
+        
+        # Pré-cache des dates
+        self._precache_dates(persons, actes)
+    
+    def _build_family_graph(self, persons: Dict[int, Person]):
+        """Construit un graphe familial optimisé"""
+        for person in persons.values():
+            # Liens parents-enfants
+            if person.pere_id or person.mere_id:
+                family_key = self._get_family_key(person.pere_id, person.mere_id)
+                self.family_graph.setdefault(family_key, set()).add(person.id)
+            
+            # Liens conjugaux
+            if person.conjoint_id:
+                spouse_key = self._get_family_key(person.id, person.conjoint_id)
+                self.family_graph.setdefault(spouse_key, set())
+    
+    def _precache_dates(self, persons: Dict[int, Person], actes: Dict[int, ActeParoissial]):
+        """Pré-cache les dates pour traitement rapide"""
+        date_strings = set()
+        
+        # Dates des personnes
+        for person in persons.values():
+            if person.date_naissance:
+                date_strings.add(person.date_naissance)
+            if person.date_deces:
+                date_strings.add(person.date_deces)
+            if person.date_mariage:
+                date_strings.add(person.date_mariage)
+        
+        # Dates des actes
+        for acte in actes.values():
+            if acte.date:
+                date_strings.add(acte.date)
+        
+        # Parsing vectorisé
+        with Pool() as pool:
+            results = pool.map(self._parse_date, date_strings)
+            self.date_cache = dict(zip(date_strings, results))
+    
+    def _parse_date(self, date_str: str) -> GedcomDate:
+        """Parse une date française en objet GedcomDate optimisé"""
+        if not date_str:
+            return GedcomDate()
+        
+        # Utilisation d'expressions régulières compilées pour la performance
+        date_pattern = re.compile(
+            r'(?P<day>\d{1,2})?\s*(?P<month>janvier|février|mars|avril|mai|juin|'
+            r'juillet|août|septembre|octobre|novembre|décembre)?\s*(?P<year>\d{4})?'
+        )
+        
+        match = date_pattern.search(date_str.lower())
+        if match:
+            day = int(match.group('day')) if match.group('day') else None
+            month = self.FRENCH_TO_GEDCOM_MONTHS.get(match.group('month')) if match.group('month') else None
+            year = int(match.group('year')) if match.group('year') else None
+            
+            return GedcomDate(day=day, month=month, year=year)
+        
+        return GedcomDate()
     
     def _write_gedcom_header(self, f):
-        """Écrit l'en-tête GEDCOM standard"""
-        f.write("0 HEAD\n")
-        f.write("1 SOUR Genealogy_Parser_Enhanced\n")
-        f.write("2 VERS 2.0.0\n")
-        f.write("2 NAME Enhanced Genealogy Parser for French Parish Records\n")
-        f.write("1 DEST ANY\n")
-        f.write("1 DATE " + datetime.now().strftime("%d %b %Y") + "\n")
-        f.write("2 TIME " + datetime.now().strftime("%H:%M:%S") + "\n")
-        f.write("1 SUBM @SUBM1@\n")
-        f.write("1 FILE genealogy_export.ged\n")
-        f.write("1 GEDC\n")
-        f.write("2 VERS 5.5.1\n")
-        f.write("2 FORM LINEAGE-LINKED\n")
-        f.write("1 CHAR UTF-8\n")
-        f.write("1 LANG French\n")
-        f.write("0 @SUBM1@ SUBM\n")
-        f.write("1 NAME Enhanced Genealogy Parser\n")
-        f.write("1 ADDR Automated genealogy extraction\n")
-    
-    def _write_individuals(self, f, persons: Dict[int, Person], 
-                          actes: Dict[int, ActeParoissial]):
-        """Écrit les enregistrements individuels"""
-        for internal_id, person in persons.items():
-            gedcom_id = self.person_id_map[internal_id]
-            
-            f.write(f"0 @{gedcom_id}@ INDI\n")
-            
-            # Nom
-            surname = person.nom.upper() if person.nom else "UNKNOWN"
-            given_name = person.prenom if person.prenom else "Unknown"
-            f.write(f"1 NAME {given_name} /{surname}/\n")
-            
-            # Variations du nom
-            for variation in person.nom_variations:
-                if variation != f"{person.prenom} {person.nom}":
-                    var_parts = variation.split(' ', 1)
-                    if len(var_parts) == 2:
-                        f.write(f"1 NAME {var_parts[0]} /{var_parts[1].upper()}/\n")
-                        f.write("2 TYPE variation\n")
-            
-            # Sexe (inféré depuis le contexte si possible)
-            gender = self._infer_gender(person, actes)
-            if gender:
-                f.write(f"1 SEX {gender}\n")
-            
-            # Naissance
-            if person.date_naissance:
-                f.write("1 BIRT\n")
-                gedcom_date = self._convert_to_gedcom_date(person.date_naissance)
-                if gedcom_date:
-                    f.write(f"2 DATE {gedcom_date}\n")
-                if person.lieu_naissance:
-                    f.write(f"2 PLAC {person.lieu_naissance}\n")
-            
-            # Décès
-            if person.date_deces:
-                f.write("1 DEAT\n")
-                gedcom_date = self._convert_to_gedcom_date(person.date_deces)
-                if gedcom_date:
-                    f.write(f"2 DATE {gedcom_date}\n")
-                if person.lieu_deces:
-                    f.write(f"2 PLAC {person.lieu_deces}\n")
-            
-            # Inhumation
-            if person.lieu_inhumation or person.notable:
-                f.write("1 BURI\n")
-                if person.lieu_inhumation:
-                    f.write(f"2 PLAC {person.lieu_inhumation}\n")
-                elif person.notable:
-                    f.write("2 PLAC Dans l'église (notable)\n")
-            
-            # Professions
-            for profession in person.profession:
-                f.write(f"1 OCCU {profession}\n")
-            
-            # Statut social et terres
-            if person.statut or person.terres:
-                title_parts = []
-                if person.statut:
-                    title_parts.append(person.statut.value)
-                if person.terres:
-                    title_parts.extend([f"sr de {terre}" for terre in person.terres])
-                title = ", ".join(title_parts)
-                f.write(f"1 TITL {title}\n")
-            
-            # Note sur la confiance et les sources
-            if person.confidence_score < 1.0 or person.sources:
-                f.write("1 NOTE ")
-                if person.confidence_score < 1.0:
-                    f.write(f"Confiance: {person.confidence_score:.2f}. ")
-                if person.sources:
-                    f.write(f"Sources: {'; '.join(person.sources)}")
-                f.write("\n")
-            
-            # Famille comme enfant
-            if person.pere_id or person.mere_id:
-                family_key = self._get_family_key(person.pere_id, person.mere_id)
-                if family_key not in self.family_id_map:
-                    family_id = f"F{self.family_counter:04d}"
-                    self.family_id_map[family_key] = family_id
-                    self.family_counter += 1
-                else:
-                    family_id = self.family_id_map[family_key]
-                
-                f.write(f"1 FAMC @{family_id}@\n")
-            
-            # Famille comme conjoint
-            if person.conjoint_id:
-                spouse_key = self._get_family_key(internal_id, person.conjoint_id)
-                if spouse_key not in self.family_id_map:
-                    family_id = f"F{self.family_counter:04d}"
-                    self.family_id_map[spouse_key] = family_id
-                    self.family_counter += 1
-                else:
-                    family_id = self.family_id_map[spouse_key]
-                
-                f.write(f"1 FAMS @{family_id}@\n")
-    
-    def _write_families(self, f, persons: Dict[int, Person], 
-                       actes: Dict[int, ActeParoissial]):
-        """Écrit les enregistrements familiaux"""
-        processed_families = set()
+        """En-tête GEDCOM enrichi"""
+        header = [
+            "0 HEAD",
+            "1 SOUR Genealogy_Parser_Pro",
+            "2 VERS 3.0.0",
+            "2 NAME Advanced French Parish Records Processor",
+            "1 DEST ANY",
+            f"1 DATE {datetime.now().strftime('%d %b %Y')}",
+            f"2 TIME {datetime.now().strftime('%H:%M:%S')}",
+            "1 SUBM @SUBM1@",
+            "1 FILE genealogy_export.ged",
+            "1 GEDC",
+            "2 VERS 5.5.1",
+            "2 FORM LINEAGE-LINKED",
+            "1 CHAR UTF-8",
+            "1 LANG French",
+            "1 NOTE Export généré avec des algorithmes avancés de reconstruction familiale",
+            "0 @SUBM1@ SUBM",
+            "1 NAME Advanced Genealogy Parser",
+            "1 ADDR Automated high-quality genealogy extraction",
+            "1 WWW https://github.com/your-repo",
+            "1 LANG French"
+        ]
         
-        # Familles basées sur les relations parent-enfant
-        for person in persons.values():
-            if person.pere_id or person.mere_id:
-                family_key = self._get_family_key(person.pere_id, person.mere_id)
-                
-                if family_key in processed_families:
-                    continue
-                
-                processed_families.add(family_key)
-                family_id = self.family_id_map.get(family_key)
-                
-                if family_id:
-                    f.write(f"0 @{family_id}@ FAM\n")
-                    
-                    # Mari
-                    if person.pere_id and person.pere_id in self.person_id_map:
-                        husband_gedcom_id = self.person_id_map[person.pere_id]
-                        f.write(f"1 HUSB @{husband_gedcom_id}@\n")
-                    
-                    # Épouse
-                    if person.mere_id and person.mere_id in self.person_id_map:
-                        wife_gedcom_id = self.person_id_map[person.mere_id]
-                        f.write(f"1 WIFE @{wife_gedcom_id}@\n")
-                    
-                    # Date de mariage (si disponible)
-                    marriage_date = self._find_marriage_date(person.pere_id, person.mere_id, persons)
-                    if marriage_date:
-                        f.write("1 MARR\n")
-                        gedcom_date = self._convert_to_gedcom_date(marriage_date)
-                        if gedcom_date:
-                            f.write(f"2 DATE {gedcom_date}\n")
-                    
-                    # Enfants
-                    children = self._find_children(person.pere_id, person.mere_id, persons)
-                    for child_id in children:
-                        if child_id in self.person_id_map:
-                            child_gedcom_id = self.person_id_map[child_id]
-                            f.write(f"1 CHIL @{child_gedcom_id}@\n")
+        f.write("\n".join(header) + "\n")
+    
+    def _process_person_chunk(self, person_ids: List[int], f, persons: Dict[int, Person]):
+        """Traitement parallèle d'un chunk de personnes"""
+        for person_id in person_ids:
+            person = persons.get(person_id)
+            if person:
+                self._write_individual(f, person)
+    
+    def _write_individual(self, f, person: Person):
+        """Écrit un individu avec toutes les métadonnées"""
+        gedcom_id = self.person_id_map[person.id]
         
-        # Familles basées sur les mariages explicites
-        for person in persons.values():
-            if person.conjoint_id:
-                family_key = self._get_family_key(person.id, person.conjoint_id)
-                
-                if family_key not in processed_families and family_key in self.family_id_map:
-                    processed_families.add(family_key)
-                    family_id = self.family_id_map[family_key]
-                    
-                    f.write(f"0 @{family_id}@ FAM\n")
-                    
-                    # Déterminer qui est le mari et qui est l'épouse
-                    gender1 = self._infer_gender(person, actes)
-                    spouse = persons.get(person.conjoint_id)
-                    gender2 = self._infer_gender(spouse, actes) if spouse else None
-                    
-                    if gender1 == 'M':
-                        f.write(f"1 HUSB @{self.person_id_map[person.id]}@\n")
-                        if person.conjoint_id in self.person_id_map:
-                            f.write(f"1 WIFE @{self.person_id_map[person.conjoint_id]}@\n")
-                    elif gender1 == 'F':
-                        f.write(f"1 WIFE @{self.person_id_map[person.id]}@\n")
-                        if person.conjoint_id in self.person_id_map:
-                            f.write(f"1 HUSB @{self.person_id_map[person.conjoint_id]}@\n")
-                    
-                    if person.date_mariage:
-                        f.write("1 MARR\n")
-                        gedcom_date = self._convert_to_gedcom_date(person.date_mariage)
-                        if gedcom_date:
-                            f.write(f"2 DATE {gedcom_date}\n")
+        lines = [
+            f"0 @{gedcom_id}@ INDI",
+            f"1 NAME {person.prenom or 'Unknown'} /{person.nom.upper() if person.nom else 'UNKNOWN'}/"
+        ]
+        
+        # Variations de noms
+        for variation in person.nom_variations:
+            lines.append(f"1 NAME {variation}")
+            lines.append("2 TYPE aka")
+        
+        # Genre inféré
+        gender = self._infer_gender_advanced(person)
+        if gender:
+            lines.append(f"1 SEX {gender}")
+        
+        # Événements vitaux
+        if person.date_naissance:
+            lines.extend(self._create_event("BIRT", person.date_naissance, person.lieu_naissance))
+        
+        if person.date_deces:
+            lines.extend(self._create_event("DEAT", person.date_deces, person.lieu_deces))
+        
+        # Profession et statut
+        for profession in person.profession:
+            lines.append(f"1 OCCU {profession}")
+            lines.append(f"2 NOTE Source: {person.sources[0]}" if person.sources else "")
+        
+        # Sources et médias
+        for source in person.sources:
+            self.counters['sources'] += 1
+            source_id = f"S{self.counters['sources']:06d}"
+            lines.extend([
+                f"1 SOUR @{source_id}@",
+                "2 PAGE Acte de référence",
+                "2 DATA",
+                f"3 TEXT {source}"
+            ])
+        
+        f.write("\n".join(lines) + "\n")
     
-    def _write_gedcom_trailer(self, f):
-        """Écrit la fin du fichier GEDCOM"""
-        f.write("0 TRLR\n")
+    def _create_event(self, event_type: str, date_str: str, place: str = None) -> List[str]:
+        """Génère des lignes GEDCOM pour un événement"""
+        lines = [f"1 {event_type}"]
+        
+        if date_str in self.date_cache:
+            gedcom_date = self.date_cache[date_str].to_gedcom()
+            if gedcom_date:
+                lines.append(f"2 DATE {gedcom_date}")
+        
+        if place:
+            lines.append(f"2 PLAC {place}")
+            # Ajout possible de coordonnées géographiques ici
+        
+        return lines
     
-    def _get_family_key(self, parent1_id: Optional[int], parent2_id: Optional[int]) -> tuple:
-        """Génère une clé unique pour une famille"""
-        if parent1_id is None and parent2_id is None:
-            return (None, None)
-        return tuple(sorted([parent1_id, parent2_id], key=lambda x: x or 0))
+    def _infer_gender_advanced(self, person: Person) -> Optional[str]:
+        """Inférence de genre avec règles avancées"""
+        # Règles basées sur la profession
+        for gender, professions in self.GENDER_INFERENCE_RULES['professions'].items():
+            if any(prof.lower() in professions for prof in person.profession):
+                return gender
+        
+        # Règles basées sur le titre
+        for gender, titles in self.GENDER_INFERENCE_RULES['titles'].items():
+            if person.statut in titles:
+                return gender
+        
+        # Règles basées sur les rôles dans les actes (à implémenter si disponible)
+        return None
     
-    def _find_children(self, father_id: Optional[int], mother_id: Optional[int], 
-                      persons: Dict[int, Person]) -> List[int]:
-        """Trouve tous les enfants d'un couple"""
-        children = []
-        for person_id, person in persons.items():
-            if person.pere_id == father_id and person.mere_id == mother_id:
-                children.append(person_id)
-        return children
+    def _process_family_chunk(self, family_keys: List[Tuple[int, int]], f, persons: Dict[int, Person]):
+        """Traitement parallèle d'un chunk de familles"""
+        for key in family_keys:
+            self._write_family(f, key, persons)
     
-    def _find_marriage_date(self, husband_id: Optional[int], wife_id: Optional[int], 
-                           persons: Dict[int, Person]) -> Optional[str]:
-        """Trouve la date de mariage d'un couple"""
+    def _write_family(self, f, family_key: Tuple[int, int]], persons: Dict[int, Person]):
+        """Écrit une famille avec toutes les relations"""
+        husband_id, wife_id = family_key
+        family_id = f"F{self.counters['families']:06d}"
+        self.counters['families'] += 1
+        
+        lines = [f"0 @{family_id}@ FAM"]
+        
+        # Conjoints
+        if husband_id and husband_id in self.person_id_map:
+            lines.append(f"1 HUSB @{self.person_id_map[husband_id]}@")
+        
+        if wife_id and wife_id in self.person_id_map:
+            lines.append(f"1 WIFE @{self.person_id_map[wife_id]}@")
+        
+        # Enfants
+        for child_id in self.family_graph.get(family_key, set()):
+            if child_id in self.person_id_map:
+                lines.append(f"1 CHIL @{self.person_id_map[child_id]}@")
+        
+        # Événements familiaux
+        marriage_date = self._get_marriage_date(husband_id, wife_id, persons)
+        if marriage_date:
+            lines.extend(self._create_event("MARR", marriage_date))
+        
+        f.write("\n".join(lines) + "\n")
+    
+    def _get_marriage_date(self, husband_id: int, wife_id: int, persons: Dict[int, Person]) -> Optional[str]:
+        """Trouve la date de mariage la plus probable"""
+        candidates = []
+        
         if husband_id:
             husband = persons.get(husband_id)
             if husband and husband.date_mariage:
-                return husband.date_mariage
+                candidates.append(husband.date_mariage)
         
         if wife_id:
             wife = persons.get(wife_id)
             if wife and wife.date_mariage:
-                return wife.date_mariage
+                candidates.append(wife.date_mariage)
         
-        return None
+        # Retourne la date la plus récente si plusieurs
+        return max(candidates, key=lambda d: self.date_cache[d].year) if candidates else None
     
-    def _infer_gender(self, person: Person, actes: Dict[int, ActeParoissial]) -> Optional[str]:
-        """Infère le genre d'une personne pour GEDCOM"""
-        if not person:
-            return None
-        
-        # Basé sur les professions
-        if any(prof in ['curé', 'prêtre'] for prof in person.profession):
-            return 'M'
-        
-        # Basé sur les titres
-        if person.statut in [PersonStatus.SIEUR, PersonStatus.SEIGNEUR, PersonStatus.ECUYER]:
-            return 'M'
-        
-        # Basé sur les actes (parrain/marraine)
-        for acte in actes.values():
-            if acte.parrain_id == person.id:
-                return 'M'
-            elif acte.marraine_id == person.id:
-                return 'F'
-        
-        return None
+    def _chunk_persons(self, persons: Dict[int, Person], chunk_size: int = 1000) -> List[List[int]]:
+        """Découpe les personnes en chunks pour traitement parallèle"""
+        ids = list(persons.keys())
+        return [ids[i:i + chunk_size] for i in range(0, len(ids), chunk_size)]
     
-    def _convert_to_gedcom_date(self, date_str: str) -> Optional[str]:
-        """Convertit une date française vers le format GEDCOM"""
-        if not date_str:
-            return None
-        
-        # Mapping des mois français vers anglais pour GEDCOM
-        french_to_gedcom_months = {
-            'janvier': 'JAN', 'février': 'FEB', 'mars': 'MAR', 'avril': 'APR',
-            'mai': 'MAY', 'juin': 'JUN', 'juillet': 'JUL', 'août': 'AUG',
-            'septembre': 'SEP', 'octobre': 'OCT', 'novembre': 'NOV', 'décembre': 'DEC'
-        }
-        
-        # Essayer de parser différents formats
-        import re
-        
-        # Format: "13 février 1646"
-        match = re.search(r'(\d{1,2})\s+(janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\s+(\d{4})', 
-                         date_str.lower())
-        if match:
-            day, month_fr, year = match.groups()
-            month_gedcom = french_to_gedcom_months.get(month_fr)
-            if month_gedcom:
-                return f"{day} {month_gedcom} {year}"
-        
-        # Format: année seule
-        year_match = re.search(r'\b(\d{4})\b', date_str)
-        if year_match:
-            return year_match.group(1)
-        
-        return None
+    def _chunk_families(self, chunk_size: int = 500) -> List[List[Tuple[int, int]]]:
+        """Découpe les familles en chunks pour traitement parallèle"""
+        keys = list(self.family_graph.keys())
+        return [keys[i:i + chunk_size] for i in range(0, len(keys), chunk_size)]
+    
+    def _write_gedcom_trailer(self, f):
+        """Fin du fichier GEDCOM"""
+        f.write("0 TRLR\n")
+
+    @staticmethod
+    def _get_family_key(parent1_id: Optional[int], parent2_id: Optional[int]) -> Tuple[int, int]:
+        """Génère une clé de famille normalisée"""
+        return tuple(sorted(filter(None, [parent1_id, parent2_id])))

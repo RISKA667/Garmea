@@ -1,199 +1,324 @@
-from .text_parser import TextParser
-from .name_extractor import NameExtractor
-from .date_parser import DateParser
-from .profession_parser import ProfessionParser
-from .relationship_parser import RelationshipParser
+import logging
+from typing import Dict, Any, Optional, Union
 
-from .modern_nlp_parser import (
-    ModernNLPParser,
-    RelationshipMatch,
-    create_relationship_parser,
-    HAS_SPACY,
-    INSTALL_INSTRUCTIONS
-)
+from .base import TextParser, NameExtractor, DateParser, ProfessionParser
+from .relationship import RelationshipFactory, BasicRelationshipParser
+from .specialized import PeriodParser, StrictParser
+from .common import get_cache, global_cache_manager
+from .config import patterns_config, ocr_config
 
-# Imports conditionnels pour les parsers avancés
 try:
-    from smart_pdf_analyzer import SmartPDFAnalyzer
-    HAS_PDF_ANALYZER = True
+    from .relationship import AdvancedRelationshipParser, EnhancedRelationshipMatch
+    ADVANCED_RELATIONSHIP_AVAILABLE = True
 except ImportError:
-    HAS_PDF_ANALYZER = False
-    SmartPDFAnalyzer = None
+    ADVANCED_RELATIONSHIP_AVAILABLE = False
+    AdvancedRelationshipParser = None
+    EnhancedRelationshipMatch = None
 
-# Export principal
+try:
+    from .specialized import PDFAnalyzer
+    PDF_ANALYZER_AVAILABLE = True
+except ImportError:
+    PDF_ANALYZER_AVAILABLE = False
+    PDFAnalyzer = None
+
+__version__ = "3.0.0"
+__author__ = "Garméa Parser Team"
+__license__ = "MIT"
+
 __all__ = [
-    # Parsers de base
-    'TextParser',
-    'NameExtractor', 
-    'DateParser',
-    'ProfessionParser',
-    'RelationshipParser',
-    
-    # Parsers NLP avancés
-    'ModernNLPParser',
-    'RelationshipMatch',
-    'create_relationship_parser',
-    
-    # Utilitaires
-    'get_optimal_parser',
-    'get_parser_capabilities',
-    'install_nlp_dependencies',
-    
-    # Flags de fonctionnalités
-    'HAS_SPACY',
-    'HAS_PDF_ANALYZER'
+    'TextParser', 'NameExtractor', 'DateParser', 'ProfessionParser',
+    'BasicRelationshipParser', 'RelationshipFactory',
+    'PeriodParser', 'StrictParser',
+    'create_parser_suite', 'get_optimal_parser', 'get_capabilities',
+    'ParserManager'
 ]
 
-# Ajout conditionnel des parsers avancés
-if HAS_PDF_ANALYZER:
-    __all__.append('SmartPDFAnalyzer')
+if ADVANCED_RELATIONSHIP_AVAILABLE:
+    __all__.extend(['AdvancedRelationshipParser', 'EnhancedRelationshipMatch'])
 
-def get_optimal_parser(parser_type: str = "relationship", prefer_nlp: bool = True):
-    """
-    Factory pour obtenir le meilleur parser disponible selon l'environnement
-    
-    Args:
-        parser_type: Type de parser ('relationship', 'text', 'name', etc.)
-        prefer_nlp: Préférer les parsers NLP quand disponibles
-        
-    Returns:
-        Instance du parser optimal
-        
-    Examples:
-        >>> parser = get_optimal_parser("relationship", prefer_nlp=True)
-        >>> # Retourne ModernNLPParser si spaCy disponible, sinon RelationshipParser
-    """
-    
-    if parser_type == "relationship":
-        return create_relationship_parser(prefer_nlp=prefer_nlp)
-    
-    elif parser_type == "text":
-        return TextParser()
-    
-    elif parser_type == "name":
-        return NameExtractor()
-    
-    elif parser_type == "date":
-        return DateParser()
-    
-    elif parser_type == "profession":
-        return ProfessionParser()
-    
-    elif parser_type == "pdf" and HAS_PDF_ANALYZER:
-        return SmartPDFAnalyzer()
-    
-    else:
-        raise ValueError(f"Parser type '{parser_type}' non supporté ou non disponible")
+if PDF_ANALYZER_AVAILABLE:
+    __all__.append('PDFAnalyzer')
 
-def get_parser_capabilities() -> dict:
-    """
-    Retourne les capacités de parsing disponibles dans l'environnement
+class ParserManager:
+    """Gestionnaire centralisé pour tous les parsers"""
     
-    Returns:
-        Dict avec les fonctionnalités disponibles
-    """
-    capabilities = {
+    def __init__(self, config=None):
+        self.config = config or {}
+        self.logger = logging.getLogger(__name__)
+        self._parsers = {}
+        self._initialized = False
+        
+        self.stats = {
+            'parsers_created': 0,
+            'documents_processed': 0,
+            'cache_hits': 0,
+            'cache_misses': 0
+        }
+    
+    def initialize(self, force_reinit: bool = False):
+        """Initialise tous les parsers de manière paresseuse"""
+        if self._initialized and not force_reinit:
+            return
+        
+        self.logger.info(f"Initialisation ParserManager v{__version__}")
+        
+        try:
+            self._parsers = {
+                'text': TextParser(self.config),
+                'name': NameExtractor(self.config),
+                'date': DateParser(self.config),
+                'profession': ProfessionParser(self.config),
+                'relationship': RelationshipFactory.get_optimal_parser(self.config),
+                'period': PeriodParser(self.config),
+                'strict': StrictParser(self.config)
+            }
+            
+            if PDF_ANALYZER_AVAILABLE:
+                self._parsers['pdf'] = PDFAnalyzer(self.config)
+            
+            self.stats['parsers_created'] = len(self._parsers)
+            self._initialized = True
+            
+            self.logger.info(f"✅ {len(self._parsers)} parsers initialisés")
+            
+        except Exception as e:
+            self.logger.error(f"Erreur initialisation parsers: {e}")
+            raise
+    
+    def get_parser(self, parser_type: str):
+        """Récupère un parser spécifique"""
+        if not self._initialized:
+            self.initialize()
+        
+        if parser_type not in self._parsers:
+            available = list(self._parsers.keys())
+            raise ValueError(f"Parser '{parser_type}' non disponible. Disponibles: {available}")
+        
+        return self._parsers[parser_type]
+    
+    def process_document(self, text: str, parser_types: Optional[list] = None) -> Dict[str, Any]:
+        """Traite un document avec plusieurs parsers"""
+        if not self._initialized:
+            self.initialize()
+        
+        if parser_types is None:
+            parser_types = ['text', 'name', 'date', 'relationship']
+        
+        self.stats['documents_processed'] += 1
+        
+        results = {}
+        processing_stats = {}
+        
+        for parser_type in parser_types:
+            if parser_type not in self._parsers:
+                self.logger.warning(f"Parser '{parser_type}' non disponible, ignoré")
+                continue
+            
+            try:
+                import time
+                start_time = time.time()
+                
+                parser = self._parsers[parser_type]
+                
+                if parser_type == 'text':
+                    result = parser.normalize_text(text)
+                elif parser_type == 'name':
+                    result = parser.extract_names(text)
+                elif parser_type == 'date':
+                    result = parser.extract_dates(text)
+                elif parser_type == 'profession':
+                    result = parser.extract_professions_and_titles(text)
+                elif parser_type == 'relationship':
+                    result = parser.extract_relationships(text)
+                elif parser_type == 'period':
+                    result = parser.parse_document(text)
+                elif parser_type == 'strict':
+                    result = parser.extract_ultra_strict_filiations(text)
+                elif parser_type == 'pdf':
+                    self.logger.warning("PDF parser nécessite un fichier, pas un texte")
+                    result = None
+                else:
+                    result = None
+                
+                processing_time = time.time() - start_time
+                
+                results[parser_type] = result
+                processing_stats[parser_type] = {
+                    'processing_time': processing_time,
+                    'success': result is not None
+                }
+                
+            except Exception as e:
+                self.logger.error(f"Erreur parser '{parser_type}': {e}")
+                results[parser_type] = None
+                processing_stats[parser_type] = {
+                    'processing_time': 0,
+                    'success': False,
+                    'error': str(e)
+                }
+        
+        return {
+            'results': results,
+            'processing_stats': processing_stats,
+            'document_stats': {
+                'text_length': len(text),
+                'parsers_used': len(parser_types),
+                'successful_parsers': sum(1 for stats in processing_stats.values() if stats['success'])
+            }
+        }
+    
+    def get_capabilities(self) -> Dict[str, Any]:
+        """Retourne les capacités disponibles"""
+        if not self._initialized:
+            self.initialize()
+        
+        return {
+            'version': __version__,
+            'parsers_available': list(self._parsers.keys()),
+            'advanced_features': {
+                'advanced_relationships': ADVANCED_RELATIONSHIP_AVAILABLE,
+                'pdf_analysis': PDF_ANALYZER_AVAILABLE,
+                'period_detection': True,
+                'strict_validation': True,
+                'ocr_corrections': True,
+                'vectorized_processing': True
+            },
+            'cache_system': {
+                'enabled': True,
+                'global_stats': global_cache_manager.get_global_stats()
+            }
+        }
+    
+    def get_global_stats(self) -> Dict[str, Any]:
+        """Statistiques globales du système"""
+        parser_stats = {}
+        
+        for name, parser in self._parsers.items():
+            if hasattr(parser, 'get_stats'):
+                parser_stats[name] = parser.get_stats()
+        
+        cache_stats = global_cache_manager.get_global_stats()
+        
+        return {
+            'manager_stats': self.stats,
+            'parser_stats': parser_stats,
+            'cache_stats': cache_stats,
+            'system_info': {
+                'version': __version__,
+                'parsers_count': len(self._parsers),
+                'initialized': self._initialized
+            }
+        }
+    
+    def cleanup_caches(self) -> Dict[str, int]:
+        """Nettoie tous les caches"""
+        cleaned = global_cache_manager.cleanup_all()
+        self.logger.info(f"Nettoyage caches: {cleaned} entrées supprimées")
+        return {'cleaned_entries': cleaned}
+
+def create_parser_suite(config=None) -> ParserManager:
+    """Crée une suite complète de parsers"""
+    return ParserManager(config)
+
+def get_optimal_parser(parser_type: str, config=None):
+    """Factory pour obtenir le parser optimal pour un type donné"""
+    manager = ParserManager(config)
+    manager.initialize()
+    return manager.get_parser(parser_type)
+
+def get_capabilities() -> Dict[str, Any]:
+    """Retourne les capacités du système de parsing"""
+    return {
+        'version': __version__,
         'base_parsers': {
-            'text': True,
-            'name': True,
-            'date': True,
-            'profession': True,
-            'relationship_basic': True
+            'text_parser': True,
+            'name_extractor': True,
+            'date_parser': True,
+            'profession_parser': True
         },
-        'advanced_features': {
-            'nlp_spacy': HAS_SPACY,
-            'pdf_analyzer': HAS_PDF_ANALYZER,
-            'relationship_advanced': HAS_SPACY,
-            'entity_recognition': HAS_SPACY,
-            'confidence_scoring': HAS_SPACY
+        'relationship_parsers': {
+            'basic': True,
+            'advanced': ADVANCED_RELATIONSHIP_AVAILABLE
         },
-        'performance': {
-            'caching': True,
-            'batch_processing': HAS_SPACY,
-            'parallel_processing': HAS_PDF_ANALYZER
+        'specialized_parsers': {
+            'period_parser': True,
+            'strict_parser': True,
+            'pdf_analyzer': PDF_ANALYZER_AVAILABLE
+        },
+        'features': {
+            'ocr_corrections': True,
+            'pattern_compilation': True,
+            'cache_system': True,
+            'vectorized_processing': True,
+            'parallel_processing': PDF_ANALYZER_AVAILABLE
         }
     }
-    
-    return capabilities
 
-def install_nlp_dependencies():
-    """
-    Guide d'installation des dépendances NLP pour améliorer les performances
-    """
-    if not HAS_SPACY:
-        print("=== AMÉLIORATION DES PERFORMANCES ===")
-        print(INSTALL_INSTRUCTIONS)
-        print("\nFonctionnalités débloquées avec spaCy :")
-        print("✅ Reconnaissance d'entités nommées avancée")
-        print("✅ Scoring de confiance automatique")
-        print("✅ Validation contextuelle")
-        print("✅ Performance 3x supérieure sur gros volumes")
-        print("✅ Support des variantes orthographiques anciennes")
+def install_dependencies_guide():
+    """Guide d'installation des dépendances optionnelles"""
+    guide = [
+        "=== GUIDE D'INSTALLATION PARSERS ===",
+        "",
+        "Dépendances de base (incluses) :",
+        "✅ re, typing, dataclasses, functools, logging",
+        "",
+        "Dépendances optionnelles pour fonctionnalités avancées :",
+        ""
+    ]
+    
+    if not ADVANCED_RELATIONSHIP_AVAILABLE:
+        guide.extend([
+            "📦 Pour parsing NLP avancé :",
+            "   pip install spacy",
+            "   python -m spacy download fr_core_news_sm",
+            "   → Améliore précision et robustesse relations",
+            ""
+        ])
     else:
-        print("✅ spaCy détecté - Fonctionnalités NLP avancées activées")
+        guide.append("✅ spaCy disponible - Parsing NLP avancé activé")
     
-    if not HAS_PDF_ANALYZER:
-        print("\nPour l'analyse PDF avancée, installez :")
-        print("pip install PyMuPDF python-magic")
+    if not PDF_ANALYZER_AVAILABLE:
+        guide.extend([
+            "📦 Pour analyse PDF :",
+            "   pip install PyMuPDF",
+            "   → Permet traitement direct des fichiers PDF",
+            ""
+        ])
     else:
-        print("✅ Analyseur PDF avancé disponible")
-
-# Configuration par défaut recommandée
-DEFAULT_CONFIG = {
-    'prefer_nlp': True,
-    'fallback_to_basic': True,
-    'enable_caching': True,
-    'confidence_threshold': 0.7,
-    'batch_size': 100
-}
-
-def create_parser_suite(config: dict = None) -> dict:
-    """
-    Crée une suite complète de parsers avec configuration optimale
+        guide.append("✅ PyMuPDF disponible - Analyse PDF activée")
     
-    Args:
-        config: Configuration personnalisée (optionnel)
-        
-    Returns:
-        Dict avec tous les parsers configurés
-    """
-    if config is None:
-        config = DEFAULT_CONFIG.copy()
+    guide.extend([
+        "🚀 Installation complète recommandée :",
+        "   pip install spacy PyMuPDF",
+        "   python -m spacy download fr_core_news_sm",
+        "",
+        f"Version actuelle: {__version__}",
+        "Documentation: Voir fichiers README du projet"
+    ])
     
-    suite = {
-        'text': TextParser(),
-        'name': NameExtractor(),
-        'date': DateParser(),
-        'profession': ProfessionParser(),
-        'relationship': get_optimal_parser("relationship", config.get('prefer_nlp', True))
-    }
-    
-    # Ajouter parsers avancés si disponibles
-    if HAS_PDF_ANALYZER:
-        suite['pdf'] = SmartPDFAnalyzer()
-    
-    return suite
+    return "\n".join(guide)
 
-# Version et compatibilité
-__version__ = "2.0.0"
-__compatibility__ = {
-    'python': ">=3.8",
-    'spacy': ">=3.4.0",  # Optionnel mais recommandé
-    'required': ['re', 'typing', 'dataclasses', 'functools'],
-    'optional': ['spacy', 'PyMuPDF', 'python-magic']
-}
+_default_manager = None
 
-# Message d'initialisation
-def _show_init_info():
-    """Affiche les informations d'initialisation (mode debug)"""
-    import os
-    if os.getenv('GARMEA_DEBUG'):
-        print(f"🔧 Parsers Garméa v{__version__} initialisés")
-        caps = get_parser_capabilities()
-        advanced_count = sum(caps['advanced_features'].values())
-        print(f"   📊 Fonctionnalités avancées: {advanced_count}/4 disponibles")
-        if not HAS_SPACY:
-            print("   ⚠️  spaCy non disponible - performances limitées")
+def get_default_manager() -> ParserManager:
+    """Retourne l'instance par défaut du gestionnaire de parsers"""
+    global _default_manager
+    if _default_manager is None:
+        _default_manager = ParserManager()
+        _default_manager.initialize()
+    return _default_manager
 
-# Exécuter à l'import si mode debug
-_show_init_info()
+if __name__ == "__main__":
+    print(install_dependencies_guide())
+    print("\n" + "="*50)
+    print("Test des capacités du système :")
+    capabilities = get_capabilities()
+    for category, features in capabilities.items():
+        print(f"\n{category.upper()}:")
+        if isinstance(features, dict):
+            for feature, available in features.items():
+                status = "✅" if available else "❌"
+                print(f"  {status} {feature}")
+        else:
+            print(f"  {features}")

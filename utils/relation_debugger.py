@@ -227,7 +227,7 @@ def debug_relationship_parser(text_sample: str, relationship_parser=None) -> Non
     if relationship_parser is None:
         # Créer un parser de base pour test
         from config.settings import ParserConfig
-        from parsers.relationship_parser import RelationshipParser
+        from parsers.relationship.basic_relationship_parser import RelationshipParser
         relationship_parser = RelationshipParser(ParserConfig())
     
     # Test du debug intégré si disponible

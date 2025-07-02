@@ -8,8 +8,8 @@ import sys
 # Ajouter le répertoire parent au path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from parsers.relationship_parser import RelationshipParser
-from parsers.text_parser import TextParser
+from parsers.relationship.basic_relationship_parser import RelationshipParser
+from parsers.base.text_parser import TextParser
 from utils.smart_cache import SmartCache
 from utils.error_handler import ErrorHandler, GarmeaError, ErrorType
 from config.settings import ParserConfig
