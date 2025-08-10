@@ -1,3 +1,36 @@
+#!/usr/bin/env python3
+"""
+CodexGenea - Parseur Généalogique Avancé
+=========================================
+
+Module principal pour l'analyse et le traitement de documents généalogiques
+français de l'Ancien Régime. Ce parseur spécialisé traite les registres
+paroissiaux, actes de baptême, mariage et sépulture avec correction OCR
+intégrée et extraction intelligente des informations familiales.
+
+Fonctionnalités principales:
+- Lecture et traitement de documents PDF et texte
+- Correction automatique des erreurs OCR
+- Extraction et normalisation des noms de personnes
+- Reconnaissance des titres nobiliaires et religieux
+- Gestion des abréviations historiques
+- Export multi-formats (JSON, TXT, GEDCOM)
+- Validation chronologique des données
+- Cache intelligent pour optimiser les performances
+
+Auteur: Garméa Parser Team
+Version: 3.0.0
+Licence: MIT
+Date: 2024-2025
+
+Exemples d'utilisation:
+    python main.py document.pdf                    # Traitement PDF complet
+    python main.py document.txt -o resultats/      # Fichier texte avec sortie personnalisée
+    python main.py document.pdf --pdf-pages 50     # Limiter à 50 pages
+    python main.py demo                            # Mode démonstration
+    python main.py --test                          # Tests intégrés
+"""
+
 import argparse
 import json
 import logging
@@ -8,89 +41,311 @@ import traceback
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Union, Any, Tuple
+from typing import Dict, List, Optional, Union, Any, Tuple, Callable
 import warnings
-warnings.filterwarnings('ignore', category=UserWarning)
+from functools import lru_cache, wraps
+from collections import defaultdict, Counter
+import hashlib
 
+# Suppression des avertissements non critiques
+warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+
+# === IMPORTS CONDITIONNELS ===
 try:
-    import fitz
+    import fitz  # PyMuPDF pour la lecture PDF
     HAS_PYMUPDF = True
 except ImportError:
     HAS_PYMUPDF = False
 
 try:
     from parsers.base.text_parser import TextParser
-    from parsers.name_extractor import NameExtractor  
+    from parsers.base.name_extractor import NameExtractor  
     from database.person_manager import PersonManager
     HAS_PARSERS = True
 except ImportError as e:
     print(f"Modules parsers manquants: {e}")
     HAS_PARSERS = False
 
+# === CONSTANTES GLOBALES ===
+VERSION = "3.0.0"
+AUTHOR = "Garméa Parser Team"
+LICENSE = "MIT"
+
+# Codes de sortie standardisés
+EXIT_SUCCESS = 0
+EXIT_ERROR = 1
+EXIT_INTERRUPTED = 130
+EXIT_CONFIG_ERROR = 2
+EXIT_DEPENDENCY_ERROR = 3
+
 
 class Config:
+    """
+    Configuration centralisée du parseur généalogique.
+    
+    Cette classe contient toutes les constantes et paramètres de configuration
+    utilisés par le système. Elle permet une gestion centralisée et cohérente
+    des paramètres de traitement.
+    
+    Attributes:
+        DEFAULT_OUTPUT_DIR: Répertoire de sortie par défaut
+        DEFAULT_LOGS_DIR: Répertoire des logs par défaut
+        DEFAULT_CONFIG_FILE: Fichier de configuration par défaut
+        MAX_PDF_PAGES: Nombre maximum de pages PDF à traiter
+        MAX_TEXT_LENGTH: Longueur maximale du texte à traiter
+        CHUNK_SIZE: Taille des chunks pour le traitement par blocs
+        CACHE_SIZE: Taille du cache pour optimiser les performances
+        ENABLE_OCR_CORRECTIONS: Activation des corrections OCR
+        ENABLE_VALIDATION: Activation de la validation des données
+        SUPPORTED_TEXT_FORMATS: Formats de texte supportés
+        SUPPORTED_PDF_FORMATS: Formats PDF supportés
+    """
+    
+    # === RÉPERTOIRES ===
     DEFAULT_OUTPUT_DIR = Path("output")
     DEFAULT_LOGS_DIR = Path("logs")
     DEFAULT_CONFIG_FILE = Path("config/settings.json")
+    
+    # === LIMITES DE TRAITEMENT ===
     MAX_PDF_PAGES = 500
     MAX_TEXT_LENGTH = 1_000_000
     CHUNK_SIZE = 100_000
     CACHE_SIZE = 5000
+    
+    # === OPTIONS DE TRAITEMENT ===
     ENABLE_OCR_CORRECTIONS = True
     ENABLE_VALIDATION = True
+    
+    # === FORMATS SUPPORTÉS ===
     SUPPORTED_TEXT_FORMATS = {'.txt', '.md', '.rtf'}
     SUPPORTED_PDF_FORMATS = {'.pdf'}
     
+    # === SEUILS DE QUALITÉ ===
+    MIN_NAME_CONFIDENCE = 0.6
+    MIN_DATE_CONFIDENCE = 0.7
+    MIN_RELATIONSHIP_CONFIDENCE = 0.8
+    
+    # === PARAMÈTRES DE PERFORMANCE ===
+    PROGRESS_UPDATE_INTERVAL = 0.5  # secondes
+    MEMORY_CLEANUP_THRESHOLD = 1000  # documents
+    
     @classmethod
     def get_all_supported_formats(cls) -> set:
+        """
+        Retourne l'ensemble de tous les formats supportés.
+        
+        Returns:
+            set: Ensemble des extensions de fichiers supportées
+        """
         return cls.SUPPORTED_TEXT_FORMATS | cls.SUPPORTED_PDF_FORMATS
     
+    @classmethod
+    def validate_config(cls, config_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Valide et normalise une configuration.
+        
+        Args:
+            config_dict: Dictionnaire de configuration à valider
+            
+        Returns:
+            Dict[str, Any]: Configuration validée et normalisée
+            
+        Raises:
+            ValueError: Si la configuration est invalide
+        """
+        validated = {}
+        
+        # Validation des paramètres numériques
+        for key, default_value in [
+            ('max_pdf_pages', cls.MAX_PDF_PAGES),
+            ('max_text_length', cls.MAX_TEXT_LENGTH),
+            ('chunk_size', cls.CHUNK_SIZE),
+            ('cache_size', cls.CACHE_SIZE)
+        ]:
+            value = config_dict.get(key, default_value)
+            if not isinstance(value, (int, float)) or value <= 0:
+                raise ValueError(f"Paramètre invalide {key}: {value}")
+            validated[key] = value
+        
+        # Validation des booléens
+        for key, default_value in [
+            ('enable_ocr_corrections', cls.ENABLE_OCR_CORRECTIONS),
+            ('enable_validation', cls.ENABLE_VALIDATION)
+        ]:
+            value = config_dict.get(key, default_value)
+            if not isinstance(value, bool):
+                raise ValueError(f"Paramètre invalide {key}: {value}")
+            validated[key] = value
+        
+        return validated
+    
 class LoggingSetup:
+    """
+    Configuration et gestion du système de logging.
+    
+    Cette classe fournit des méthodes pour configurer le système de logging
+    de manière cohérente et centralisée, avec support pour les logs console
+    et fichier.
+    """
+    
     @staticmethod
     def setup_logging(verbose: bool = False, log_file: Optional[str] = None) -> logging.Logger:
-        Config.DEFAULT_LOGS_DIR.mkdir(exist_ok=True)
+        """
+        Configure le système de logging.
+        
+        Args:
+            verbose: Active le mode debug si True
+            log_file: Chemin vers le fichier de log (optionnel)
+            
+        Returns:
+            logging.Logger: Logger configuré
+            
+        Raises:
+            OSError: Si impossible de créer le répertoire de logs
+        """
+        try:
+            Config.DEFAULT_LOGS_DIR.mkdir(exist_ok=True)
+        except OSError as e:
+            raise OSError(f"Impossible de créer le répertoire de logs: {e}")
+        
         level = logging.DEBUG if verbose else logging.INFO
+        
+        # Formatter personnalisé avec couleurs pour la console
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S')
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
         
+        # Logger principal
         logger = logging.getLogger('garmeae_parser')
         logger.setLevel(level)
+        
+        # Nettoyage des handlers existants
         if logger.handlers:
             logger.handlers.clear()
+        
+        # Handler console
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(level)
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
+        
+        # Handler fichier (optionnel)
         if log_file:
-            file_handler = logging.FileHandler(log_file, encoding='utf-8')
-            file_handler.setLevel(logging.DEBUG)
-            file_handler.setFormatter(formatter)
-            logger.addHandler(file_handler)
+            try:
+                file_handler = logging.FileHandler(log_file, encoding='utf-8')
+                file_handler.setLevel(logging.DEBUG)
+                file_handler.setFormatter(formatter)
+                logger.addHandler(file_handler)
+            except OSError as e:
+                logger.warning(f"Impossible de créer le fichier de log {log_file}: {e}")
+        
         return logger
+    
+    @staticmethod
+    def get_logger(name: str = None) -> logging.Logger:
+        """
+        Récupère un logger configuré.
+        
+        Args:
+            name: Nom du logger (optionnel)
+            
+        Returns:
+            logging.Logger: Logger configuré
+        """
+        return logging.getLogger(name or 'garmeae_parser')
 
 class EnhancedPDFReader:
+    """
+    Lecteur PDF optimisé avec gestion d'erreurs avancée.
+    
+    Cette classe fournit des fonctionnalités avancées pour la lecture et
+    l'analyse de documents PDF, avec support pour le traitement par blocs,
+    la gestion de la mémoire et l'optimisation des performances.
+    
+    Attributes:
+        logger: Logger pour les messages de diagnostic
+        stats: Statistiques de traitement
+        _page_cache: Cache pour les pages déjà lues
+        _text_cache: Cache pour les textes extraits
+    """
+    
     def __init__(self, logger: Optional[logging.Logger] = None):
-        self.logger = logger or logging.getLogger(__name__)
+        """
+        Initialise le lecteur PDF.
+        
+        Args:
+            logger: Logger personnalisé (optionnel)
+        """
+        self.logger = logger or LoggingSetup.get_logger(__name__)
+        
+        # Statistiques de traitement
         self.stats = {
             'pages_processed': 0,
             'total_chars': 0,
             'processing_time': 0.0,
             'errors': 0,
-            'warnings': 0
+            'warnings': 0,
+            'cache_hits': 0,
+            'cache_misses': 0
         }
+        
+        # Caches pour optimiser les performances
+        self._page_cache = {}
+        self._text_cache = {}
+        self._max_cache_size = 100
     
     @property
     def can_read_pdf(self) -> bool:
+        """
+        Vérifie si la lecture PDF est disponible.
+        
+        Returns:
+            bool: True si PyMuPDF est disponible
+        """
         return HAS_PYMUPDF
     
+    def _clear_caches(self):
+        """Nettoie les caches pour libérer la mémoire."""
+        if len(self._page_cache) > self._max_cache_size:
+            self._page_cache.clear()
+        if len(self._text_cache) > self._max_cache_size:
+            self._text_cache.clear()
+    
+    def _get_cache_key(self, pdf_path: Path, page_num: int) -> str:
+        """Génère une clé de cache unique."""
+        return f"{pdf_path.stem}_{page_num}"
+    
     def get_pdf_info(self, pdf_path: Union[str, Path]) -> Dict[str, Any]:
+        """
+        Récupère les informations détaillées d'un fichier PDF.
+        
+        Args:
+            pdf_path: Chemin vers le fichier PDF
+            
+        Returns:
+            Dict[str, Any]: Informations détaillées du PDF
+            
+        Raises:
+            FileNotFoundError: Si le fichier n'existe pas
+            PermissionError: Si pas de permission de lecture
+        """
         pdf_path = Path(pdf_path)
+        
+        if not pdf_path.exists():
+            raise FileNotFoundError(f"Fichier PDF introuvable: {pdf_path}")
+        
+        if not pdf_path.is_file():
+            raise ValueError(f"Le chemin ne correspond pas à un fichier: {pdf_path}")
+        
+        # Informations de base
         basic_info = {
             'file_name': pdf_path.name,
-            'file_size_mb': pdf_path.stat().st_size / (1024 * 1024),
+            'file_size_mb': round(pdf_path.stat().st_size / (1024 * 1024), 2),
             'can_process': False,
-            'estimated_time_minutes': 0.0
+            'estimated_time_minutes': 0.0,
+            'file_path': str(pdf_path.absolute())
         }
         
         if not self.can_read_pdf:
@@ -99,101 +354,190 @@ class EnhancedPDFReader:
         
         try:
             with fitz.open(str(pdf_path)) as doc:
+                # Informations du document
                 basic_info.update({
                     'pages': len(doc),
                     'can_process': True,
-                    'metadata': doc.metadata,
-                    'estimated_time_minutes': len(doc) * 0.05
+                    'metadata': {
+                        'title': doc.metadata.get('title', ''),
+                        'author': doc.metadata.get('author', ''),
+                        'subject': doc.metadata.get('subject', ''),
+                        'creator': doc.metadata.get('creator', ''),
+                        'creation_date': doc.metadata.get('creationDate', ''),
+                        'modification_date': doc.metadata.get('modDate', '')
+                    },
+                    'estimated_time_minutes': round(len(doc) * 0.05, 2),
+                    'file_format': 'PDF',
+                    'version': doc.metadata.get('format', 'PDF')
                 })
                 
+                # Analyse d'un échantillon de page
                 sample_page = doc[0] if len(doc) > 0 else None
                 if sample_page:
                     sample_text = sample_page.get_text()
-                    basic_info['has_text'] = len(sample_text.strip()) > 100
-                    basic_info['sample_text_length'] = len(sample_text)
+                    basic_info.update({
+                        'has_text': len(sample_text.strip()) > 100,
+                        'sample_text_length': len(sample_text),
+                        'sample_text_preview': sample_text[:200] + '...' if len(sample_text) > 200 else sample_text,
+                        'text_density': round(len(sample_text) / max(sample_page.rect.width * sample_page.rect.height, 1), 4)
+                    })
                 
         except Exception as e:
             basic_info['error'] = str(e)
             self.logger.error(f"Erreur lecture info PDF: {e}")
+            self.stats['errors'] += 1
+        
         return basic_info
     
     def read_pdf_file(self, pdf_path: Union[str, Path], 
                      max_pages: Optional[int] = None,
                      page_range: Optional[Tuple[int, int]] = None,
-                     progress_callback: Optional[callable] = None) -> str:
+                     progress_callback: Optional[Callable] = None) -> str:
+        """
+        Lit et extrait le texte d'un fichier PDF avec optimisations.
+        
+        Args:
+            pdf_path: Chemin vers le fichier PDF
+            max_pages: Nombre maximum de pages à traiter
+            page_range: Plage de pages spécifique (début, fin)
+            progress_callback: Fonction de callback pour le progrès
+            
+        Returns:
+            str: Texte extrait du PDF
+            
+        Raises:
+            FileNotFoundError: Si le fichier n'existe pas
+            ImportError: Si PyMuPDF n'est pas disponible
+            ValueError: Si la plage de pages est invalide
+        """
         start_time = time.time()
         pdf_path = Path(pdf_path)
+        
+        # Validation du fichier
         if not pdf_path.exists():
             raise FileNotFoundError(f"Fichier PDF introuvable: {pdf_path}")
+        
+        if not pdf_path.is_file():
+            raise ValueError(f"Le chemin ne correspond pas à un fichier: {pdf_path}")
         
         if not self.can_read_pdf:
             raise ImportError("PyMuPDF requis mais non disponible. Installez avec: pip install PyMuPDF")
         
-        self.logger.info(f"Lecture PDF: {pdf_path.name}")
+        self.logger.info(f"📖 Lecture PDF: {pdf_path.name}")
         
         try:
             with fitz.open(str(pdf_path)) as doc:
                 total_pages = len(doc)
-                self.logger.info(f"Document: {total_pages} pages")
+                self.logger.info(f"📄 Document: {total_pages} pages")
+                
+                # Calcul de la plage de pages
                 start_page, end_page = self._calculate_page_range(
                     total_pages, max_pages, page_range)
-                self.logger.info(f"Traitement pages {start_page + 1} à {end_page}")
+                
+                self.logger.info(f"🎯 Traitement pages {start_page + 1} à {end_page}")
+                
+                # Traitement optimisé par blocs
                 text_parts = []
                 pages_processed = 0
+                total_chars = 0
                 
-                for page_num in range(start_page, end_page):
-                    try:
-                        page = doc[page_num]
-                        page_text = page.get_text()
-                        
-                        if page_text.strip():
-                            text_parts.append(f"\n--- PAGE {page_num + 1} ---\n")
-                            text_parts.append(page_text)
-                        else:
-                            self.logger.warning(f"Page {page_num + 1} sans texte")
-                            self.stats['warnings'] += 1
-                        
-                        pages_processed += 1
-                        
-                        if progress_callback:
-                            progress = (pages_processed / (end_page - start_page)) * 100
-                            progress_callback(progress, page_num + 1, end_page)
-                        
-                        if pages_processed % 25 == 0:
-                            self.logger.info(f"⏳ Progression: {pages_processed}/{end_page - start_page} pages")
-                        
-                    except Exception as e:
-                        self.logger.error(f"Erreur page {page_num + 1}: {e}")
-                        self.stats['errors'] += 1
-                        continue
+                # Traitement par blocs pour optimiser la mémoire
+                block_size = min(50, end_page - start_page)  # 50 pages par bloc
                 
+                for block_start in range(start_page, end_page, block_size):
+                    block_end = min(block_start + block_size, end_page)
+                    
+                    for page_num in range(block_start, block_end):
+                        try:
+                            # Vérification du cache
+                            cache_key = self._get_cache_key(pdf_path, page_num)
+                            if cache_key in self._text_cache:
+                                page_text = self._text_cache[cache_key]
+                                self.stats['cache_hits'] += 1
+                            else:
+                                page = doc[page_num]
+                                page_text = page.get_text()
+                                self._text_cache[cache_key] = page_text
+                                self.stats['cache_misses'] += 1
+                            
+                            if page_text.strip():
+                                text_parts.append(f"\n--- PAGE {page_num + 1} ---\n")
+                                text_parts.append(page_text)
+                                total_chars += len(page_text)
+                            else:
+                                self.logger.warning(f"⚠️ Page {page_num + 1} sans texte")
+                                self.stats['warnings'] += 1
+                            
+                            pages_processed += 1
+                            
+                            # Mise à jour du progrès
+                            if progress_callback:
+                                progress = (pages_processed / (end_page - start_page)) * 100
+                                progress_callback(progress, page_num + 1, end_page)
+                            
+                            # Logs de progression
+                            if pages_processed % 25 == 0:
+                                self.logger.info(f"⏳ Progression: {pages_processed}/{end_page - start_page} pages")
+                            
+                        except Exception as e:
+                            self.logger.error(f"❌ Erreur page {page_num + 1}: {e}")
+                            self.stats['errors'] += 1
+                            continue
+                    
+                    # Nettoyage du cache après chaque bloc
+                    self._clear_caches()
+                
+                # Assemblage du texte final
                 full_text = '\n'.join(text_parts)
+                
+                # Mise à jour des statistiques
+                processing_time = time.time() - start_time
                 self.stats.update({
                     'pages_processed': pages_processed,
-                    'total_chars': len(full_text),
-                    'processing_time': time.time() - start_time
+                    'total_chars': total_chars,
+                    'processing_time': processing_time,
+                    'pages_per_second': pages_processed / max(processing_time, 0.001),
+                    'chars_per_second': total_chars / max(processing_time, 0.001)
                 })
                 
                 self.logger.info(
                     f"✅ PDF lu avec succès: {pages_processed} pages, "
-                    f"{len(full_text):,} caractères, "
-                    f"{self.stats['processing_time']:.2f}s"
+                    f"{total_chars:,} caractères, "
+                    f"{processing_time:.2f}s "
+                    f"({self.stats['pages_per_second']:.1f} pages/s)"
                 )
                 
                 return full_text
                 
         except Exception as e:
             self.stats['errors'] += 1
-            self.logger.error(f"Erreur lecture PDF: {e}")
+            self.logger.error(f"❌ Erreur lecture PDF: {e}")
             raise
     
     def _calculate_page_range(self, total_pages: int, 
                             max_pages: Optional[int],
                             page_range: Optional[Tuple[int, int]]) -> Tuple[int, int]:
-        """Calcule la plage de pages à traiter (0-indexé)"""
+        """
+        Calcule la plage de pages à traiter (0-indexé).
+        
+        Args:
+            total_pages: Nombre total de pages dans le document
+            max_pages: Nombre maximum de pages à traiter
+            page_range: Plage spécifique (début, fin) en 1-indexé
+            
+        Returns:
+            Tuple[int, int]: Plage de pages (début, fin) en 0-indexé
+            
+        Raises:
+            ValueError: Si la plage de pages est invalide
+        """
         
         if page_range:
             start, end = page_range
+            # Validation de la plage
+            if start < 1 or end < start:
+                raise ValueError(f"Plage invalide: {start}-{end}")
+            
             # Convertir en 0-indexé et valider
             start_page = max(0, start - 1)
             end_page = min(total_pages, end)
@@ -201,195 +545,497 @@ class EnhancedPDFReader:
             start_page = 0
             end_page = min(total_pages, max_pages) if max_pages else total_pages
         
+        # Validation finale
         if start_page >= end_page:
             raise ValueError(f"Plage de pages invalide: {start_page + 1}-{end_page}")
+        
+        if start_page >= total_pages:
+            raise ValueError(f"Page de début {start_page + 1} dépasse le nombre total de pages {total_pages}")
         
         return start_page, end_page
     
     def get_statistics(self) -> Dict[str, Any]:
-        """Retourne les statistiques de traitement"""
+        """
+        Retourne les statistiques détaillées de traitement.
+        
+        Returns:
+            Dict[str, Any]: Statistiques complètes avec métriques de performance
+        """
         stats = self.stats.copy()
         
+        # Calcul des métriques de performance
         if stats['processing_time'] > 0:
-            stats['pages_per_second'] = stats['pages_processed'] / stats['processing_time']
-            stats['chars_per_second'] = stats['total_chars'] / stats['processing_time']
+            stats['pages_per_second'] = round(stats['pages_processed'] / stats['processing_time'], 2)
+            stats['chars_per_second'] = round(stats['total_chars'] / stats['processing_time'], 2)
+            stats['avg_chars_per_page'] = round(stats['total_chars'] / max(stats['pages_processed'], 1), 2)
+        
+        # Métriques de cache
+        total_cache_operations = stats['cache_hits'] + stats['cache_misses']
+        if total_cache_operations > 0:
+            stats['cache_hit_rate'] = round(stats['cache_hits'] / total_cache_operations * 100, 2)
+        else:
+            stats['cache_hit_rate'] = 0.0
+        
+        # Métriques de qualité
+        if stats['pages_processed'] > 0:
+            stats['error_rate'] = round(stats['errors'] / stats['pages_processed'] * 100, 2)
+            stats['warning_rate'] = round(stats['warnings'] / stats['pages_processed'] * 100, 2)
+        else:
+            stats['error_rate'] = 0.0
+            stats['warning_rate'] = 0.0
+        
+        # Informations sur la mémoire
+        stats['cache_size'] = len(self._text_cache)
+        stats['memory_usage_mb'] = round(
+            (len(self._text_cache) * 1024 + len(self._page_cache) * 512) / (1024 * 1024), 2
+        )
         
         return stats
+    
+    def reset_statistics(self):
+        """Réinitialise toutes les statistiques."""
+        self.stats = {
+            'pages_processed': 0,
+            'total_chars': 0,
+            'processing_time': 0.0,
+            'errors': 0,
+            'warnings': 0,
+            'cache_hits': 0,
+            'cache_misses': 0
+        }
+        self._clear_caches()
 
 class EnhancedGenealogyParser:
-    """Parseur généalogique principal avec intégration OCR complète"""
+    """
+    Parseur généalogique principal avec intégration OCR complète.
+    
+    Cette classe est le cœur du système de traitement généalogique. Elle coordonne
+    l'ensemble des parsers spécialisés pour extraire, normaliser et valider les
+    informations des documents généalogiques français de l'Ancien Régime.
+    
+    Fonctionnalités principales:
+    - Normalisation et correction OCR du texte
+    - Extraction intelligente des noms de personnes
+    - Reconnaissance des titres nobiliaires et religieux
+    - Gestion des abréviations historiques
+    - Validation chronologique des données
+    - Cache intelligent pour optimiser les performances
+    - Export multi-formats des résultats
+    
+    Attributes:
+        logger: Logger pour les messages de diagnostic
+        config: Configuration du parseur
+        _text_parser: Parser de texte (lazy loading)
+        _name_extractor: Extracteur de noms (lazy loading)
+        _person_manager: Gestionnaire de personnes (lazy loading)
+        stats: Statistiques de traitement
+        _processing_cache: Cache pour optimiser les traitements répétitifs
+    """
     
     def __init__(self, config_path: Optional[str] = None, 
                  logger: Optional[logging.Logger] = None):
-        self.logger = logger or logging.getLogger(__name__)
-        self.config = self._load_config(config_path)
+        """
+        Initialise le parseur généalogique.
+        
+        Args:
+            config_path: Chemin vers le fichier de configuration (optionnel)
+            logger: Logger personnalisé (optionnel)
+            
+        Raises:
+            ValueError: Si la configuration est invalide
+            OSError: Si le fichier de configuration ne peut être lu
+        """
+        self.logger = logger or LoggingSetup.get_logger(__name__)
+        
+        # Chargement et validation de la configuration
+        try:
+            self.config = self._load_config(config_path)
+            self.config = Config.validate_config(self.config)
+        except Exception as e:
+            self.logger.error(f"Erreur de configuration: {e}")
+            raise
+        
+        # Initialisation des composants (lazy loading)
         self._text_parser = None
         self._name_extractor = None  
         self._person_manager = None
+        
+        # Cache pour optimiser les traitements
+        self._processing_cache = {}
+        self._max_cache_size = 1000
+        
+        # Statistiques de traitement
         self.stats = {
             'documents_processed': 0,
             'total_persons': 0,
             'total_corrections': 0,
             'processing_time': 0.0,
-            'errors_handled': 0
+            'errors_handled': 0,
+            'cache_hits': 0,
+            'cache_misses': 0,
+            'ocr_corrections_applied': 0,
+            'names_extracted': 0,
+            'persons_created': 0
         }
         
         self.logger.info("🔧 Parseur généalogique initialisé")
+        self.logger.debug(f"Configuration: {self.config}")
     
     def _load_config(self, config_path: Optional[str]) -> Dict[str, Any]:
-        """Charge la configuration depuis un fichier ou utilise les défauts"""
+        """
+        Charge la configuration depuis un fichier ou utilise les défauts.
         
+        Args:
+            config_path: Chemin vers le fichier de configuration (optionnel)
+            
+        Returns:
+            Dict[str, Any]: Configuration chargée et validée
+            
+        Raises:
+            OSError: Si le fichier de configuration ne peut être lu
+            json.JSONDecodeError: Si le fichier JSON est malformé
+        """
+        
+        # Configuration par défaut
         default_config = {
             'enable_ocr_corrections': Config.ENABLE_OCR_CORRECTIONS,
             'enable_validation': Config.ENABLE_VALIDATION,
             'cache_size': Config.CACHE_SIZE,
             'max_text_length': Config.MAX_TEXT_LENGTH,
-            'chunk_size': Config.CHUNK_SIZE
+            'chunk_size': Config.CHUNK_SIZE,
+            'min_name_confidence': Config.MIN_NAME_CONFIDENCE,
+            'min_date_confidence': Config.MIN_DATE_CONFIDENCE,
+            'min_relationship_confidence': Config.MIN_RELATIONSHIP_CONFIDENCE,
+            'progress_update_interval': Config.PROGRESS_UPDATE_INTERVAL,
+            'memory_cleanup_threshold': Config.MEMORY_CLEANUP_THRESHOLD
         }
         
-        if config_path and Path(config_path).exists():
-            try:
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    file_config = json.load(f)
-                default_config.update(file_config)
-                self.logger.info(f"📋 Configuration chargée: {config_path}")
-            except Exception as e:
-                self.logger.warning(f"Erreur chargement config: {e}")
+        # Chargement depuis fichier si spécifié
+        if config_path:
+            config_file = Path(config_path)
+            if config_file.exists():
+                try:
+                    with open(config_file, 'r', encoding='utf-8') as f:
+                        file_config = json.load(f)
+                    
+                    # Validation des clés de configuration
+                    valid_keys = set(default_config.keys())
+                    invalid_keys = set(file_config.keys()) - valid_keys
+                    if invalid_keys:
+                        self.logger.warning(f"Clés de configuration invalides ignorées: {invalid_keys}")
+                    
+                    # Mise à jour avec les valeurs du fichier
+                    default_config.update({k: v for k, v in file_config.items() if k in valid_keys})
+                    self.logger.info(f"📋 Configuration chargée: {config_path}")
+                    
+                except json.JSONDecodeError as e:
+                    self.logger.error(f"Erreur JSON dans le fichier de configuration: {e}")
+                    raise
+                except OSError as e:
+                    self.logger.error(f"Erreur lecture fichier de configuration: {e}")
+                    raise
+            else:
+                self.logger.warning(f"Fichier de configuration introuvable: {config_path}")
         
         return default_config
     
+    def _clear_processing_cache(self):
+        """Nettoie le cache de traitement pour libérer la mémoire."""
+        if len(self._processing_cache) > self._max_cache_size:
+            self._processing_cache.clear()
+            self.logger.debug("Cache de traitement nettoyé")
+    
+    def _get_cache_key(self, text: str, operation: str) -> str:
+        """Génère une clé de cache unique pour un texte et une opération."""
+        content_hash = hashlib.md5(text.encode('utf-8')).hexdigest()
+        return f"{operation}_{content_hash[:16]}"
+    
+    def _update_stats(self, **kwargs):
+        """Met à jour les statistiques de traitement."""
+        for key, value in kwargs.items():
+            if key in self.stats:
+                if isinstance(value, (int, float)):
+                    self.stats[key] += value
+                else:
+                    self.stats[key] = value
+    
     @property
     def text_parser(self) -> 'TextParser':
-        """Parser de texte (lazy loading)"""
+        """
+        Parser de texte avec lazy loading.
+        
+        Returns:
+            TextParser: Instance du parser de texte
+            
+        Raises:
+            ImportError: Si les modules parsers ne sont pas disponibles
+        """
         if not HAS_PARSERS:
             raise ImportError("Modules parsers non disponibles")
         
         if self._text_parser is None:
-            self._text_parser = TextParser(self.config)
-            self.logger.debug("📝 TextParser initialisé")
+            try:
+                self._text_parser = TextParser(self.config)
+                self.logger.debug("📝 TextParser initialisé")
+            except Exception as e:
+                self.logger.error(f"Erreur initialisation TextParser: {e}")
+                raise
         
         return self._text_parser
     
     @property
     def name_extractor(self) -> 'NameExtractor':
-        """Extracteur de noms (lazy loading)"""
+        """
+        Extracteur de noms avec lazy loading.
+        
+        Returns:
+            NameExtractor: Instance de l'extracteur de noms
+            
+        Raises:
+            ImportError: Si les modules parsers ne sont pas disponibles
+        """
         if not HAS_PARSERS:
             raise ImportError("Modules parsers non disponibles")
         
         if self._name_extractor is None:
-            self._name_extractor = NameExtractor(self.config)
-            self.logger.debug("👤 NameExtractor initialisé")
+            try:
+                self._name_extractor = NameExtractor(self.config)
+                self.logger.debug("👤 NameExtractor initialisé")
+            except Exception as e:
+                self.logger.error(f"Erreur initialisation NameExtractor: {e}")
+                raise
         
         return self._name_extractor
     
     @property  
     def person_manager(self) -> 'PersonManager':
-        """Gestionnaire de personnes (lazy loading)"""
+        """
+        Gestionnaire de personnes avec lazy loading.
+        
+        Returns:
+            PersonManager: Instance du gestionnaire de personnes
+            
+        Raises:
+            ImportError: Si les modules parsers ne sont pas disponibles
+        """
         if not HAS_PARSERS:
             raise ImportError("Modules parsers non disponibles")
         
         if self._person_manager is None:
-            self._person_manager = PersonManager(self.config.get('cache_size', Config.CACHE_SIZE))
-            self.logger.debug("🏛️ PersonManager initialisé")
+            try:
+                cache_size = self.config.get('cache_size', Config.CACHE_SIZE)
+                self._person_manager = PersonManager(cache_size)
+                self.logger.debug("🏛️ PersonManager initialisé")
+            except Exception as e:
+                self.logger.error(f"Erreur initialisation PersonManager: {e}")
+                raise
         
         return self._person_manager
     
     def process_document(self, text: str, 
                         source_info: Optional[Dict[str, Any]] = None,
-                        progress_callback: Optional[callable] = None) -> Dict[str, Any]:
+                        progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
+        """
+        Traite un document généalogique complet avec optimisations.
+        
+        Cette méthode coordonne l'ensemble du processus de traitement :
+        1. Normalisation et correction OCR du texte
+        2. Segmentation du document en sections logiques
+        3. Extraction des noms de personnes
+        4. Création et gestion des entités personnes
+        5. Validation et enrichissement des données
+        
+        Args:
+            text: Texte du document à traiter
+            source_info: Informations sur la source du document
+            progress_callback: Fonction de callback pour le progrès
+            
+        Returns:
+            Dict[str, Any]: Rapport complet de traitement
+            
+        Raises:
+            ValueError: Si le texte est vide ou invalide
+            RuntimeError: Si une erreur critique survient pendant le traitement
+        """
         start_time = time.time()
+        
+        # Validation du texte d'entrée
+        if not text or not text.strip():
+            raise ValueError("Le texte à traiter ne peut pas être vide")
+        
+        # Informations de source par défaut
         source_info = source_info or {
             'lieu': 'Document généalogique',
             'type': 'registre_paroissial',
-            'date_traitement': datetime.now().isoformat()
+            'date_traitement': datetime.now().isoformat(),
+            'source_id': hashlib.md5(text.encode('utf-8')).hexdigest()[:16]
         }
         
         self.logger.info(f"🚀 Début traitement: {source_info.get('lieu', 'Source inconnue')}")
+        self.logger.debug(f"Longueur du texte: {len(text):,} caractères")
         
         try:
-            # Validation initiale
+            # Validation et troncature du texte si nécessaire
             if len(text) > self.config['max_text_length']:
-                self.logger.warning(f"Texte tronqué: {len(text)} → {self.config['max_text_length']} caractères")
+                original_length = len(text)
                 text = text[:self.config['max_text_length']]
+                self.logger.warning(
+                    f"Texte tronqué: {original_length:,} → {len(text):,} caractères "
+                    f"(limite: {self.config['max_text_length']:,})"
+                )
             
+            # Initialisation du rapport de traitement
             report = {
                 'source_info': source_info,
                 'processing_metadata': {
                     'start_time': datetime.now().isoformat(),
                     'text_length': len(text),
-                    'enable_ocr': self.config['enable_ocr_corrections']
+                    'enable_ocr': self.config['enable_ocr_corrections'],
+                    'enable_validation': self.config['enable_validation'],
+                    'parser_version': VERSION
                 },
                 'results': {},
                 'statistics': {},
-                'errors': []
+                'errors': [],
+                'warnings': []
             }
             
+            # === ÉTAPE 1: NORMALISATION DU TEXTE ===
             self._update_progress(progress_callback, 10, "Normalisation du texte...")
             
             try:
-                if HAS_PARSERS:
-                    norm_result = self.text_parser.normalize_text(text, apply_ocr_corrections=True)
-                    normalized_text = norm_result['normalized']
-                    
-                    report['results']['text_normalization'] = {
-                        'ocr_corrections': norm_result.get('ocr_corrections', []),
-                        'abbreviations_expanded': norm_result.get('abbreviations_expanded', []),
-                        'improvement_ratio': norm_result.get('improvement_ratio', 0.0)
-                    }
-                    
-                    self.stats['total_corrections'] += len(norm_result.get('ocr_corrections', []))
+                # Vérification du cache pour la normalisation
+                cache_key = self._get_cache_key(text, 'normalization')
+                if cache_key in self._processing_cache:
+                    norm_result = self._processing_cache[cache_key]
+                    self.stats['cache_hits'] += 1
+                    self.logger.debug("Normalisation récupérée du cache")
                 else:
-                    normalized_text = text
-                    report['results']['text_normalization'] = {'status': 'parsers_unavailable'}
+                    if HAS_PARSERS:
+                        norm_result = self.text_parser.normalize_text(text)
+                        self._processing_cache[cache_key] = norm_result
+                        self.stats['cache_misses'] += 1
+                    else:
+                        norm_result = {
+                            'normalized': text,
+                            'ocr_corrections': [],
+                            'abbreviations_expanded': [],
+                            'improvement_ratio': 0.0
+                        }
+                        report['warnings'].append("Modules parsers non disponibles - normalisation basique")
+                
+                normalized_text = norm_result['normalized']
+                
+                # Enrichissement du rapport
+                report['results']['text_normalization'] = {
+                    'ocr_corrections': norm_result.get('ocr_corrections', []),
+                    'abbreviations_expanded': norm_result.get('abbreviations_expanded', []),
+                    'improvement_ratio': norm_result.get('improvement_ratio', 0.0),
+                    'original_length': norm_result.get('original_length', len(text)),
+                    'final_length': norm_result.get('final_length', len(normalized_text)),
+                    'compression_ratio': norm_result.get('compression_ratio', 1.0)
+                }
+                
+                # Mise à jour des statistiques
+                ocr_corrections_count = len(norm_result.get('ocr_corrections', []))
+                self._update_stats(
+                    total_corrections=ocr_corrections_count,
+                    ocr_corrections_applied=ocr_corrections_count
+                )
+                
+                self.logger.info(
+                    f"📝 Normalisation terminée: {len(normalized_text):,} caractères, "
+                    f"{ocr_corrections_count} corrections OCR"
+                )
                 
             except Exception as e:
-                self.logger.error(f"Erreur normalisation: {e}")
+                self.logger.error(f"❌ Erreur normalisation: {e}")
                 normalized_text = text
                 report['errors'].append(f"Normalisation: {str(e)}")
+                self._update_stats(errors_handled=1)
             
             # === ÉTAPE 2: SEGMENTATION ===
             self._update_progress(progress_callback, 25, "Segmentation du document...")
             
             try:
-                if HAS_PARSERS:
-                    segments = self.text_parser.extract_segments(normalized_text, normalize_segments=True)
-                    report['results']['segmentation'] = {
-                        'total_segments': len(segments),
-                        'segments_by_type': self._count_segments_by_type(segments)
-                    }
+                # Cache pour la segmentation
+                cache_key = self._get_cache_key(normalized_text, 'segmentation')
+                if cache_key in self._processing_cache:
+                    segments = self._processing_cache[cache_key]
+                    self.stats['cache_hits'] += 1
                 else:
-                    segments = [{'type': 'text', 'content': normalized_text}]
-                    report['results']['segmentation'] = {'status': 'basic_segmentation'}
+                    if HAS_PARSERS:
+                        segments = self.text_parser.extract_segments(normalized_text)
+                        self._processing_cache[cache_key] = segments
+                        self.stats['cache_misses'] += 1
+                    else:
+                        segments = [{'type': 'text', 'content': normalized_text}]
+                        report['warnings'].append("Modules parsers non disponibles - segmentation basique")
+                
+                # Analyse des segments
+                segments_by_type = self._count_segments_by_type(segments)
+                total_segments = len(segments)
+                
+                report['results']['segmentation'] = {
+                    'total_segments': total_segments,
+                    'segments_by_type': segments_by_type,
+                    'avg_segment_length': sum(len(s.get('text', '')) for s in segments) / max(total_segments, 1),
+                    'quality_distribution': self._analyze_segment_quality(segments)
+                }
+                
+                self.logger.info(f"📋 Segmentation terminée: {total_segments} segments")
                 
             except Exception as e:
-                self.logger.error(f"Erreur segmentation: {e}")
+                self.logger.error(f"❌ Erreur segmentation: {e}")
                 segments = [{'type': 'text', 'content': normalized_text}]
                 report['errors'].append(f"Segmentation: {str(e)}")
+                self._update_stats(errors_handled=1)
             
             # === ÉTAPE 3: EXTRACTION DES NOMS ===
             self._update_progress(progress_callback, 50, "Extraction des noms...")
             
             try:
-                if HAS_PARSERS:
-                    persons_data = self.name_extractor.extract_complete_names_with_sources(
-                        normalized_text, 
-                        source_info.get('lieu', 'Source'),
-                        1
-                    )
-                    
-                    report['results']['name_extraction'] = {
-                        'total_names': len(persons_data),
-                        'names_with_corrections': sum(1 for p in persons_data if p.get('correction_ocr_appliquee')),
-                        'sample_names': [p['nom_complet'] for p in persons_data[:10]]
-                    }
+                # Cache pour l'extraction des noms
+                cache_key = self._get_cache_key(normalized_text, 'name_extraction')
+                if cache_key in self._processing_cache:
+                    persons_data = self._processing_cache[cache_key]
+                    self.stats['cache_hits'] += 1
                 else:
-                    persons_data = []
-                    report['results']['name_extraction'] = {'status': 'parsers_unavailable'}
+                    if HAS_PARSERS:
+                        persons_data = self.name_extractor.extract_names(normalized_text)
+                        self._processing_cache[cache_key] = persons_data
+                        self.stats['cache_misses'] += 1
+                    else:
+                        persons_data = []
+                        report['warnings'].append("Modules parsers non disponibles - extraction basique")
+                
+                # Analyse des noms extraits
+                total_names = len(persons_data)
+                names_with_corrections = sum(1 for p in persons_data if p.get('ocr_corrected', False))
+                high_confidence_names = sum(1 for p in persons_data if p.get('confidence', 0) > 0.8)
+                
+                report['results']['name_extraction'] = {
+                    'total_names': total_names,
+                    'names_with_corrections': names_with_corrections,
+                    'high_confidence_names': high_confidence_names,
+                    'avg_confidence': sum(p.get('confidence', 0) for p in persons_data) / max(total_names, 1),
+                    'sample_names': [p['full_name'] for p in persons_data[:10]],
+                    'name_types': self._analyze_name_types(persons_data)
+                }
+                
+                self._update_stats(names_extracted=total_names)
+                
+                self.logger.info(
+                    f"👥 Extraction terminée: {total_names} noms, "
+                    f"{names_with_corrections} corrigés, "
+                    f"{high_confidence_names} haute confiance"
+                )
                 
             except Exception as e:
-                self.logger.error(f"Erreur extraction noms: {e}")
+                self.logger.error(f"❌ Erreur extraction noms: {e}")
                 persons_data = []
                 report['errors'].append(f"Extraction noms: {str(e)}")
+                self._update_stats(errors_handled=1)
             
             # === ÉTAPE 4: CRÉATION DES PERSONNES ===
             self._update_progress(progress_callback, 75, "Création des personnes...")
@@ -397,90 +1043,332 @@ class EnhancedGenealogyParser:
             created_persons = []
             try:
                 if HAS_PARSERS and persons_data:
-                    for person_data in persons_data:
-                        try:
-                            person = self.person_manager.find_or_create_person(
-                                person_data['nom_complet'],
-                                {
-                                    'source': source_info.get('lieu', 'Source'),
-                                    'extraction_data': person_data
-                                }
-                            )
-                            created_persons.append(person)
-                        except Exception as e:
-                            self.logger.warning(f"Erreur création personne: {e}")
-                            continue
+                    # Traitement par lots pour optimiser les performances
+                    batch_size = 50
+                    total_batches = (len(persons_data) + batch_size - 1) // batch_size
+                    
+                    for batch_idx in range(total_batches):
+                        start_idx = batch_idx * batch_size
+                        end_idx = min(start_idx + batch_size, len(persons_data))
+                        batch_data = persons_data[start_idx:end_idx]
+                        
+                        for person_data in batch_data:
+                            try:
+                                # Validation des données de la personne
+                                if not person_data.get('full_name'):
+                                    continue
+                                
+                                person = self.person_manager.find_or_create_person(
+                                    person_data['full_name'],
+                                    {
+                                        'source': source_info.get('lieu', 'Source'),
+                                        'extraction_data': person_data,
+                                        'source_id': source_info.get('source_id', ''),
+                                        'extraction_confidence': person_data.get('confidence', 0.0)
+                                    }
+                                )
+                                created_persons.append(person)
+                                
+                            except Exception as e:
+                                self.logger.warning(f"⚠️ Erreur création personne '{person_data.get('full_name', 'N/A')}': {e}")
+                                continue
+                        
+                        # Mise à jour du progrès pour les lots
+                        if progress_callback:
+                            batch_progress = 75 + (batch_idx + 1) / total_batches * 15
+                            progress_callback(batch_progress, f"Lot {batch_idx + 1}/{total_batches}")
+                    
+                    # Statistiques du gestionnaire de personnes
+                    person_stats = self.person_manager.get_enhanced_statistics()
                     
                     report['results']['person_creation'] = {
                         'total_persons': len(created_persons),
-                        'cache_statistics': self.person_manager.get_enhanced_statistics()
+                        'persons_created': len([p for p in created_persons if p.id_personne]),
+                        'persons_found': len([p for p in created_persons if not p.id_personne]),
+                        'cache_statistics': person_stats,
+                        'avg_confidence': sum(p.confiance for p in created_persons) / max(len(created_persons), 1)
                     }
+                    
+                    self._update_stats(persons_created=len(created_persons))
+                    
+                    self.logger.info(
+                        f"🏛️ Création terminée: {len(created_persons)} personnes "
+                        f"({person_stats.get('total_persons', 0)} total en cache)"
+                    )
                 else:
-                    report['results']['person_creation'] = {'status': 'no_data_or_parsers_unavailable'}
+                    report['results']['person_creation'] = {
+                        'status': 'no_data_or_parsers_unavailable',
+                        'total_persons': 0
+                    }
+                    report['warnings'].append("Aucune donnée de personne à traiter")
                 
             except Exception as e:
-                self.logger.error(f"Erreur création personnes: {e}")
+                self.logger.error(f"❌ Erreur création personnes: {e}")
                 report['errors'].append(f"Création personnes: {str(e)}")
+                self._update_stats(errors_handled=1)
             
+            # === FINALISATION ===
             self._update_progress(progress_callback, 90, "Finalisation...")
-            processing_time = time.time() - start_time
-            self.stats.update({
-                'documents_processed': self.stats['documents_processed'] + 1,
-                'total_persons': len(created_persons),
-                'processing_time': self.stats['processing_time'] + processing_time
-            })
             
+            processing_time = time.time() - start_time
+            
+            # Mise à jour des statistiques globales
+            self._update_stats(
+                documents_processed=1,
+                total_persons=len(created_persons),
+                processing_time=processing_time
+            )
+            
+            # Nettoyage du cache si nécessaire
+            if self.stats['documents_processed'] % self.config.get('memory_cleanup_threshold', 1000) == 0:
+                self._clear_processing_cache()
+                self.logger.debug("Nettoyage périodique du cache effectué")
+            
+            # Finalisation du rapport
             report['processing_metadata'].update({
                 'end_time': datetime.now().isoformat(),
-                'processing_time_seconds': processing_time,
-                'errors_count': len(report['errors'])
+                'processing_time_seconds': round(processing_time, 3),
+                'errors_count': len(report['errors']),
+                'warnings_count': len(report['warnings']),
+                'success_rate': self._calculate_success_rate(report)
             })
             
+            # Génération des statistiques détaillées
             report['statistics'] = self._generate_processing_statistics()
+            
+            # Validation finale des résultats
+            if self.config.get('enable_validation', True):
+                validation_result = self._validate_results(report)
+                report['validation'] = validation_result
             
             self._update_progress(progress_callback, 100, "Traitement terminé!")
             
-            self.logger.info(f"Traitement terminé en {processing_time:.2f}s")
+            self.logger.info(
+                f"✅ Traitement terminé en {processing_time:.2f}s - "
+                f"{len(created_persons)} personnes, "
+                f"{len(report['errors'])} erreurs, "
+                f"{len(report['warnings'])} avertissements"
+            )
+            
             return report
             
         except Exception as e:
-            self.stats['errors_handled'] += 1
-            self.logger.error(f"Erreur critique traitement: {e}")
+            self._update_stats(errors_handled=1)
+            self.logger.error(f"❌ Erreur critique traitement: {e}")
+            if self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug(f"Traceback: {traceback.format_exc()}")
             raise
     
     def _count_segments_by_type(self, segments: List[Dict]) -> Dict[str, int]:
-        """Compte les segments par type"""
-        counts = {}
+        """
+        Compte les segments par type.
+        
+        Args:
+            segments: Liste des segments à analyser
+            
+        Returns:
+            Dict[str, int]: Comptage par type de segment
+        """
+        counts = defaultdict(int)
         for segment in segments:
             seg_type = segment.get('type', 'unknown')
-            counts[seg_type] = counts.get(seg_type, 0) + 1
-        return counts
+            counts[seg_type] += 1
+        return dict(counts)
     
-    def _update_progress(self, callback: Optional[callable], 
+    def _analyze_segment_quality(self, segments: List[Dict]) -> Dict[str, Any]:
+        """
+        Analyse la qualité des segments.
+        
+        Args:
+            segments: Liste des segments à analyser
+            
+        Returns:
+            Dict[str, Any]: Analyse de la qualité
+        """
+        if not segments:
+            return {'avg_quality': 0.0, 'quality_distribution': {}}
+        
+        qualities = [s.get('quality_score', 0.0) for s in segments]
+        avg_quality = sum(qualities) / len(qualities)
+        
+        # Distribution de qualité
+        quality_ranges = {
+            'excellent': len([q for q in qualities if q >= 0.8]),
+            'good': len([q for q in qualities if 0.6 <= q < 0.8]),
+            'fair': len([q for q in qualities if 0.4 <= q < 0.6]),
+            'poor': len([q for q in qualities if q < 0.4])
+        }
+        
+        return {
+            'avg_quality': round(avg_quality, 3),
+            'quality_distribution': quality_ranges,
+            'total_segments': len(segments)
+        }
+    
+    def _analyze_name_types(self, persons_data: List[Dict]) -> Dict[str, int]:
+        """
+        Analyse les types de noms extraits.
+        
+        Args:
+            persons_data: Données des personnes extraites
+            
+        Returns:
+            Dict[str, int]: Comptage par type de nom
+        """
+        name_types = defaultdict(int)
+        
+        for person in persons_data:
+            name_type = person.get('name_type', 'unknown')
+            name_types[name_type] += 1
+            
+            # Analyse des titres
+            if person.get('has_noble_title'):
+                name_types['noble'] += 1
+            if person.get('has_religious_title'):
+                name_types['religious'] += 1
+        
+        return dict(name_types)
+    
+    def _update_progress(self, callback: Optional[Callable], 
                         progress: int, message: str):
-        """Met à jour le progrès si callback fourni"""
-        if callback:
-            callback(progress, message)
+        """
+        Met à jour le progrès si callback fourni.
+        
+        Args:
+            callback: Fonction de callback pour le progrès
+            progress: Pourcentage de progression (0-100)
+            message: Message descriptif
+        """
+        if callback and callable(callback):
+            try:
+                callback(progress, message)
+            except Exception as e:
+                self.logger.debug(f"Erreur callback progrès: {e}")
+    
+    def _calculate_success_rate(self, report: Dict[str, Any]) -> float:
+        """
+        Calcule le taux de succès du traitement.
+        
+        Args:
+            report: Rapport de traitement
+            
+        Returns:
+            float: Taux de succès (0.0 à 1.0)
+        """
+        total_operations = 0
+        successful_operations = 0
+        
+        # Normalisation
+        if 'text_normalization' in report['results']:
+            total_operations += 1
+            if not report['results']['text_normalization'].get('errors'):
+                successful_operations += 1
+        
+        # Segmentation
+        if 'segmentation' in report['results']:
+            total_operations += 1
+            if report['results']['segmentation'].get('total_segments', 0) > 0:
+                successful_operations += 1
+        
+        # Extraction des noms
+        if 'name_extraction' in report['results']:
+            total_operations += 1
+            if report['results']['name_extraction'].get('total_names', 0) > 0:
+                successful_operations += 1
+        
+        # Création des personnes
+        if 'person_creation' in report['results']:
+            total_operations += 1
+            if report['results']['person_creation'].get('total_persons', 0) > 0:
+                successful_operations += 1
+        
+        return round(successful_operations / max(total_operations, 1), 3)
+    
+    def _validate_results(self, report: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Valide les résultats du traitement.
+        
+        Args:
+            report: Rapport de traitement
+            
+        Returns:
+            Dict[str, Any]: Résultats de validation
+        """
+        validation = {
+            'is_valid': True,
+            'issues': [],
+            'recommendations': []
+        }
+        
+        # Validation de la normalisation
+        if 'text_normalization' in report['results']:
+            norm = report['results']['text_normalization']
+            if norm.get('improvement_ratio', 0) < 0.1:
+                validation['issues'].append("Faible amélioration du texte")
+                validation['recommendations'].append("Vérifier la qualité OCR du document source")
+        
+        # Validation de l'extraction des noms
+        if 'name_extraction' in report['results']:
+            names = report['results']['name_extraction']
+            if names.get('total_names', 0) == 0:
+                validation['issues'].append("Aucun nom extrait")
+                validation['recommendations'].append("Vérifier le contenu du document")
+            elif names.get('avg_confidence', 0) < 0.6:
+                validation['issues'].append("Confiance moyenne faible pour les noms")
+                validation['recommendations'].append("Améliorer la qualité du texte source")
+        
+        # Validation de la création des personnes
+        if 'person_creation' in report['results']:
+            persons = report['results']['person_creation']
+            if persons.get('total_persons', 0) == 0:
+                validation['issues'].append("Aucune personne créée")
+                validation['recommendations'].append("Vérifier l'extraction des noms")
+        
+        # Validation globale
+        if validation['issues']:
+            validation['is_valid'] = False
+        
+        return validation
     
     def _generate_processing_statistics(self) -> Dict[str, Any]:
-        """Génère des statistiques détaillées"""
+        """
+        Génère des statistiques détaillées du traitement.
+        
+        Returns:
+            Dict[str, Any]: Statistiques complètes
+        """
         
         base_stats = {
             'global': self.stats.copy(),
             'performance': {
-                'avg_processing_time': (
-                    self.stats['processing_time'] / max(self.stats['documents_processed'], 1)
+                'avg_processing_time': round(
+                    self.stats['processing_time'] / max(self.stats['documents_processed'], 1), 3
                 ),
-                'corrections_per_document': (
-                    self.stats['total_corrections'] / max(self.stats['documents_processed'], 1)
+                'corrections_per_document': round(
+                    self.stats['total_corrections'] / max(self.stats['documents_processed'], 1), 2
+                ),
+                'persons_per_document': round(
+                    self.stats['total_persons'] / max(self.stats['documents_processed'], 1), 2
+                ),
+                'cache_efficiency': round(
+                    self.stats['cache_hits'] / max(self.stats['cache_hits'] + self.stats['cache_misses'], 1) * 100, 2
+                )
+            },
+            'quality_metrics': {
+                'error_rate': round(
+                    self.stats['errors_handled'] / max(self.stats['documents_processed'], 1) * 100, 2
+                ),
+                'ocr_correction_rate': round(
+                    self.stats['ocr_corrections_applied'] / max(self.stats['total_corrections'], 1) * 100, 2
                 )
             }
         }
         
+        # Statistiques des parsers si disponibles
         if HAS_PARSERS:
             try:
                 if self._text_parser:
-                    base_stats['text_parser'] = self._text_parser.get_enhanced_statistics()
+                    base_stats['text_parser'] = self._text_parser.get_stats()
                 if self._person_manager:
                     base_stats['person_manager'] = self._person_manager.get_enhanced_statistics()
             except Exception as e:

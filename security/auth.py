@@ -2,186 +2,161 @@
 Module d'authentification et autorisation sécurisé pour Garméa
 """
 import os
-from datetime import datetime, timedelta, timezone
+import uuid
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
+import bcrypt
 import jwt
-from passlib.context import CryptContext
-from fastapi import HTTPException, status, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, EmailStr
+from fastapi import HTTPException, Depends
+from fastapi.security import HTTPBearer
+from pydantic import BaseModel
 
-# Configuration sécurisée
-SECRET_KEY = os.getenv("JWT_SECRET_KEY")
-if not SECRET_KEY:
-    raise ValueError("JWT_SECRET_KEY environment variable required")
+class UserIn(BaseModel):
+    username: str
+    email: str
+    password: str
 
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-REFRESH_TOKEN_EXPIRE_DAYS = 7
-
-# Context de hashage sécurisé
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-# Bearer token security
-security = HTTPBearer()
-
-class UserBase(BaseModel):
-    email: EmailStr
-    is_active: bool = True
+class UserOut(BaseModel):
+    user_id: str
+    username: str
+    email: str
     is_admin: bool = False
 
-class UserCreate(UserBase):
+class UserLogin(BaseModel):
+    username: str
     password: str
-    confirm_password: str
-    
-    def validate_passwords(self):
-        if self.password != self.confirm_password:
-            raise ValueError("Passwords don't match")
-        if len(self.password) < 8:
-            raise ValueError("Password must be at least 8 characters")
-        return self
-
-class UserInDB(UserBase):
-    id: int
-    hashed_password: str
-    created_at: datetime
-    last_login: Optional[datetime] = None
-
-class Token(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-    expires_in: int
-
-class TokenData(BaseModel):
-    user_id: Optional[int] = None
-    email: Optional[str] = None
-    scopes: list[str] = []
 
 class AuthManager:
-    """Gestionnaire d'authentification sécurisé"""
-    
     def __init__(self):
-        self.pwd_context = pwd_context
-    
-    def verify_password(self, plain_password: str, hashed_password: str) -> bool:
-        """Vérifie un mot de passe"""
-        return self.pwd_context.verify(plain_password, hashed_password)
-    
-    def get_password_hash(self, password: str) -> str:
-        """Hash un mot de passe"""
-        return self.pwd_context.hash(password)
-    
-    def create_access_token(self, data: Dict[str, Any], 
-                          expires_delta: Optional[timedelta] = None) -> str:
-        """Crée un token d'accès JWT"""
-        to_encode = data.copy()
+        self.secret_key = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
+        self.algorithm = "HS256"
+        self.access_token_expire_minutes = 30
         
-        if expires_delta:
-            expire = datetime.now(timezone.utc) + expires_delta
-        else:
-            expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        # Stockage temporaire des utilisateurs (en production, utiliser une base de données)
+        self.users: Dict[str, Dict[str, Any]] = {}
         
-        to_encode.update({
-            "exp": expire,
-            "iat": datetime.now(timezone.utc),
-            "type": "access"
-        })
-        
-        return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+        # Créer un utilisateur admin par défaut
+        self._create_default_admin()
     
-    def create_refresh_token(self, user_id: int) -> str:
-        """Crée un refresh token"""
-        expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    def _create_default_admin(self):
+        """Créer un utilisateur administrateur par défaut"""
+        admin_user = {
+            "user_id": "admin-001",
+            "username": "admin",
+            "email": "admin@garmea.fr",
+            "password_hash": bcrypt.hashpw("admin123".encode('utf-8'), bcrypt.gensalt()),
+            "is_admin": True,
+            "created_at": datetime.now()
+        }
+        self.users[admin_user["user_id"]] = admin_user
+    
+    async def register_user(self, user: UserIn) -> UserOut:
+        """Enregistrer un nouvel utilisateur"""
+        # Vérifier si l'utilisateur existe déjà
+        for existing_user in self.users.values():
+            if existing_user["username"] == user.username or existing_user["email"] == user.email:
+                raise ValueError("Utilisateur ou email déjà existant")
         
-        to_encode = {
+        # Créer le nouvel utilisateur
+        user_id = str(uuid.uuid4())
+        password_hash = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt())
+        
+        new_user = {
             "user_id": user_id,
-            "exp": expire,
-            "iat": datetime.now(timezone.utc),
-            "type": "refresh"
+            "username": user.username,
+            "email": user.email,
+            "password_hash": password_hash,
+            "is_admin": False,
+            "created_at": datetime.now()
         }
         
-        return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    
-    def verify_token(self, token: str) -> TokenData:
-        """Vérifie et décode un token JWT"""
-        try:
-            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-            
-            # Vérifier le type de token
-            token_type = payload.get("type")
-            if token_type != "access":
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid token type"
-                )
-            
-            # Extraire les données
-            user_id: int = payload.get("user_id")
-            email: str = payload.get("email")
-            
-            if user_id is None:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid token payload"
-                )
-            
-            token_data = TokenData(user_id=user_id, email=email)
-            return token_data
-            
-        except jwt.ExpiredSignatureError:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token expired"
-            )
-        except jwt.JWTError:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Could not validate credentials"
-            )
-
-# Instance globale
-auth_manager = AuthManager()
-
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> TokenData:
-    """Dependency pour récupérer l'utilisateur actuel"""
-    token = credentials.credentials
-    return auth_manager.verify_token(token)
-
-async def get_current_admin_user(current_user: TokenData = Depends(get_current_user)) -> TokenData:
-    """Dependency pour vérifier les droits admin"""
-    # Ici vous devriez vérifier en base si l'utilisateur est admin
-    # Pour l'exemple, on simule
-    if not current_user.email or "admin" not in current_user.email:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Insufficient permissions"
+        self.users[user_id] = new_user
+        
+        return UserOut(
+            user_id=user_id,
+            username=user.username,
+            email=user.email,
+            is_admin=False
         )
+    
+    async def authenticate_user(self, user: UserLogin) -> Dict[str, Any]:
+        """Authentifier un utilisateur et retourner un token"""
+        # Rechercher l'utilisateur
+        target_user = None
+        for existing_user in self.users.values():
+            if existing_user["username"] == user.username:
+                target_user = existing_user
+                break
+        
+        if not target_user:
+            raise PermissionError("Nom d'utilisateur ou mot de passe incorrect")
+        
+        # Vérifier le mot de passe
+        if not bcrypt.checkpw(user.password.encode('utf-8'), target_user["password_hash"]):
+            raise PermissionError("Nom d'utilisateur ou mot de passe incorrect")
+        
+        # Créer le token d'accès
+        access_token_expires = timedelta(minutes=self.access_token_expire_minutes)
+        access_token = self._create_access_token(
+            data={"sub": target_user["user_id"]}, expires_delta=access_token_expires
+        )
+        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": UserOut(
+                user_id=target_user["user_id"],
+                username=target_user["username"],
+                email=target_user["email"],
+                is_admin=target_user["is_admin"]
+            )
+        }
+    
+    def _create_access_token(self, data: dict, expires_delta: Optional[timedelta] = None):
+        """Créer un token d'accès JWT"""
+        to_encode = data.copy()
+        if expires_delta:
+            expire = datetime.utcnow() + expires_delta
+        else:
+            expire = datetime.utcnow() + timedelta(minutes=15)
+        to_encode.update({"exp": expire})
+        encoded_jwt = jwt.encode(to_encode, self.secret_key, algorithm=self.algorithm)
+        return encoded_jwt
+    
+    async def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
+        """Vérifier un token JWT et retourner les données utilisateur"""
+        try:
+            payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
+            user_id: str = payload.get("sub")
+            if user_id is None:
+                return None
+            return self.users.get(user_id)
+        except jwt.PyJWTError:
+            return None
+    
+    async def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Récupérer un utilisateur par son ID"""
+        return self.users.get(user_id)
+    
+    async def count_users(self) -> int:
+        """Compter le nombre total d'utilisateurs"""
+        return len(self.users)
+
+# Fonctions utilitaires pour FastAPI
+async def get_current_user(token: str = Depends(HTTPBearer())) -> Dict[str, Any]:
+    """Dépendance FastAPI pour récupérer l'utilisateur actuel"""
+    auth_manager = AuthManager()
+    user = await auth_manager.verify_token(token.credentials)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Token invalide")
+    return user
+
+async def get_current_admin_user(current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    """Dépendance FastAPI pour récupérer un utilisateur administrateur"""
+    if not current_user.get("is_admin", False):
+        raise HTTPException(status_code=403, detail="Accès administrateur requis")
     return current_user
 
-class RateLimiter:
-    """Rate limiter simple en mémoire (à remplacer par Redis en production)"""
-    
-    def __init__(self):
-        self.requests = {}
-    
-    def is_allowed(self, key: str, max_requests: int = 100, window_minutes: int = 60) -> bool:
-        """Vérifie si la requête est autorisée"""
-        now = datetime.now()
-        window_start = now - timedelta(minutes=window_minutes)
-        
-        if key not in self.requests:
-            self.requests[key] = []
-        
-        # Nettoyer les anciennes requêtes
-        self.requests[key] = [req_time for req_time in self.requests[key] if req_time > window_start]
-        
-        # Vérifier la limite
-        if len(self.requests[key]) >= max_requests:
-            return False
-        
-        # Ajouter la requête actuelle
-        self.requests[key].append(now)
-        return True
-
-rate_limiter = RateLimiter()
+def is_admin_user(user: Dict[str, Any]) -> bool:
+    """Vérifier si un utilisateur est administrateur"""
+    return user.get("is_admin", False)

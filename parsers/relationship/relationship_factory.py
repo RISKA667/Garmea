@@ -1,7 +1,15 @@
 import logging
 from typing import Union, Dict, Any, Optional
+
 from .basic_relationship_parser import BasicRelationshipParser
-from .advanced_relationship_parser import AdvancedRelationshipParser, HAS_SPACY
+
+try:
+    from .advanced_relationship_parser import AdvancedRelationshipParser, HAS_SPACY
+    ADVANCED_AVAILABLE = True
+except ImportError:
+    ADVANCED_AVAILABLE = False
+    AdvancedRelationshipParser = None
+    HAS_SPACY = False
 
 class RelationshipFactory:
     @staticmethod
@@ -9,7 +17,7 @@ class RelationshipFactory:
                           fallback_enabled: bool = True) -> Union[AdvancedRelationshipParser, BasicRelationshipParser]:
         logger = logging.getLogger(__name__)
         
-        if prefer_advanced and HAS_SPACY:
+        if prefer_advanced and ADVANCED_AVAILABLE and HAS_SPACY:
             logger.info("Création du parser de relations avancé (spaCy)")
             return AdvancedRelationshipParser(config, fallback_to_basic=fallback_enabled)
         
@@ -27,18 +35,18 @@ class RelationshipFactory:
     
     @staticmethod
     def get_advanced_parser(config=None, fallback_enabled: bool = True) -> AdvancedRelationshipParser:
-        if not HAS_SPACY:
+        if not ADVANCED_AVAILABLE or not HAS_SPACY:
             raise ImportError("spaCy non disponible pour le parser avancé")
         return AdvancedRelationshipParser(config, fallback_to_basic=fallback_enabled)
     
     @staticmethod
     def get_capabilities() -> Dict[str, Any]:
         return {
-            'spacy_available': HAS_SPACY,
+            'spacy_available': HAS_SPACY if ADVANCED_AVAILABLE else False,
             'basic_parser': True,
-            'advanced_parser': HAS_SPACY,
+            'advanced_parser': ADVANCED_AVAILABLE and HAS_SPACY,
             'fallback_support': True,
-            'recommended_parser': 'advanced' if HAS_SPACY else 'basic'
+            'recommended_parser': 'advanced' if (ADVANCED_AVAILABLE and HAS_SPACY) else 'basic'
         }
     
     @staticmethod

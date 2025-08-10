@@ -275,3 +275,83 @@ class SecureFileValidator:
 
 # Instance globale
 file_validator = SecureFileValidator()
+
+import os
+import magic
+from typing import Tuple
+from fastapi import UploadFile
+
+class FileValidator:
+    def __init__(self):
+        self.allowed_extensions = {'.pdf', '.txt', '.doc', '.docx'}
+        self.allowed_mime_types = {
+            'application/pdf',
+            'text/plain',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        }
+        self.max_file_size = 50 * 1024 * 1024  # 50MB
+    
+    async def validate_file(self, file: UploadFile) -> Tuple[bool, str]:
+        """
+        Valider un fichier uploadé
+        
+        Returns:
+            Tuple[bool, str]: (is_valid, error_message)
+        """
+        try:
+            # Vérifier l'extension
+            if not self._validate_extension(file.filename):
+                return False, "Type de fichier non autorisé"
+            
+            # Vérifier la taille
+            if not await self._validate_size(file):
+                return False, "Fichier trop volumineux"
+            
+            # Vérifier le type MIME
+            if not await self._validate_mime_type(file):
+                return False, "Type de contenu non autorisé"
+            
+            return True, ""
+            
+        except Exception as e:
+            return False, f"Erreur de validation: {str(e)}"
+    
+    def _validate_extension(self, filename: str) -> bool:
+        """Vérifier l'extension du fichier"""
+        if not filename:
+            return False
+        
+        file_extension = os.path.splitext(filename.lower())[1]
+        return file_extension in self.allowed_extensions
+    
+    async def _validate_size(self, file: UploadFile) -> bool:
+        """Vérifier la taille du fichier"""
+        try:
+            # Lire le début du fichier pour obtenir la taille
+            content = await file.read()
+            await file.seek(0)  # Remettre le curseur au début
+            
+            return len(content) <= self.max_file_size
+        except Exception:
+            return False
+    
+    async def _validate_mime_type(self, file: UploadFile) -> bool:
+        """Vérifier le type MIME du fichier"""
+        try:
+            content = await file.read(2048)  # Lire les premiers 2KB
+            await file.seek(0)  # Remettre le curseur au début
+            
+            mime_type = magic.from_buffer(content, mime=True)
+            return mime_type in self.allowed_mime_types
+        except Exception:
+            # Si magic ne fonctionne pas, on se base sur l'extension
+            return self._validate_extension(file.filename)
+    
+    def get_file_info(self, file: UploadFile) -> dict:
+        """Obtenir les informations sur le fichier"""
+        return {
+            "filename": file.filename,
+            "content_type": file.content_type,
+            "size": getattr(file, 'size', 0)
+        }

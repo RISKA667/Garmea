@@ -1,70 +1,198 @@
-# Getting Started with Create React App
+# Garméa Frontend
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Frontend moderne pour l'application Garméa - Assistant généalogique intelligent.
 
-## Available Scripts
+## 🚀 Fonctionnalités
 
-In the project directory, you can run:
+- **Interface moderne** : Design responsive avec Tailwind CSS
+- **Navigation fluide** : Routing avec React Router
+- **Composants réutilisables** : Architecture modulaire
+- **Gestion d'état** : Hooks personnalisés pour une meilleure organisation
+- **API intégrée** : Service complet pour communiquer avec le backend
+- **Onboarding guidé** : Processus d'inscription en 5 étapes
+- **Pages complètes** : Landing, Pricing, Checkout, Dashboard, Arbre généalogique
 
-### `npm start`
+## 🛠️ Technologies
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+- **React 19** : Framework principal
+- **Tailwind CSS 4** : Framework CSS utilitaire
+- **Lucide React** : Icônes modernes
+- **React Router** : Navigation et routing
+- **PostCSS** : Traitement CSS avancé
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+## 📦 Installation
 
-### `npm test`
+```bash
+# Cloner le projet
+git clone <repository-url>
+cd garmea-frontend
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+# Installer les dépendances
+npm install
 
-### `npm run build`
+# Démarrer en mode développement
+npm start
+```
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+## 🔧 Configuration
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+### Variables d'environnement
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+Copiez le fichier `env.example` vers `.env.local` et configurez :
 
-### `npm run eject`
+```bash
+# Configuration API
+REACT_APP_API_URL=http://localhost:8000
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+# Environnement
+REACT_APP_ENV=development
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+# Version de l'application
+REACT_APP_VERSION=0.1.0
+```
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+### Scripts disponibles
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+```bash
+# Développement
+npm start          # Démarrer le serveur de développement
+npm run build      # Build de production
+npm test           # Lancer les tests
+npm run eject      # Éjecter la configuration (irréversible)
 
-## Learn More
+# Qualité de code
+npm run lint       # Vérifier le code avec ESLint
+npm run format     # Formater le code avec Prettier
+```
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+## 📁 Structure du projet
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+```
+src/
+├── components/          # Composants réutilisables
+│   ├── Button.js       # Bouton avec variantes
+│   ├── Input.js        # Champ de saisie
+│   ├── Card.js         # Conteneur
+│   └── index.js        # Exports
+├── hooks/              # Hooks personnalisés
+│   ├── useLocalStorage.js
+│   ├── useApi.js
+│   └── index.js
+├── services/           # Services API
+│   ├── api.js          # Service principal
+│   └── index.js
+├── pages/              # Pages de l'application
+│   ├── LandingPage.js
+│   ├── PricingPage.js
+│   ├── CheckoutPage.js
+│   ├── DashboardPro.js
+│   ├── FamilyTreeInteractive.js
+│   └── OnboardingPage.js
+├── App.js              # Composant principal
+├── index.js            # Point d'entrée
+└── index.css           # Styles globaux
+```
 
-### Code Splitting
+## 🎨 Design System
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+### Couleurs
 
-### Analyzing the Bundle Size
+- **Primary** : Bleu (#3B82F6) - Actions principales
+- **Secondary** : Vert (#22C55E) - Actions secondaires
+- **Accent** : Orange (#F59E0B) - Accents et alertes
+- **Emerald** : Vert émeraude (#10B981) - Succès
+- **Indigo** : Indigo (#6366F1) - Navigation
+- **Purple** : Violet (#A855F7) - Fonctionnalités premium
+- **Pink** : Rose (#EC4899) - Actions spéciales
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+### Composants
 
-### Making a Progressive Web App
+Tous les composants suivent une API cohérente avec :
+- Support des variantes
+- États (disabled, loading, error, success)
+- Accessibilité intégrée
+- Design responsive
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+## 🔌 API
 
-### Advanced Configuration
+Le service API (`src/services/api.js`) fournit des méthodes pour :
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+- **Authentification** : login, register, logout
+- **Utilisateurs** : CRUD complet
+- **Documents** : Upload, gestion, suppression
+- **Analyse** : Déclenchement et suivi
+- **Arbre généalogique** : Récupération et visualisation
+- **Rapports** : Génération et téléchargement
+- **Abonnements** : Gestion des plans
 
-### Deployment
+## 🧪 Tests
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+```bash
+# Lancer tous les tests
+npm test
 
-### `npm run build` fails to minify
+# Tests en mode watch
+npm test -- --watch
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+# Tests avec couverture
+npm test -- --coverage
+```
+
+## 📦 Build et déploiement
+
+### Build de production
+
+```bash
+npm run build
+```
+
+### Script de build automatisé
+
+```bash
+chmod +x scripts/build.sh
+./scripts/build.sh
+```
+
+### Configuration de déploiement
+
+Le fichier `deploy.config.js` contient la configuration pour différents environnements.
+
+## 🐛 Débogage
+
+### Mode développement
+
+```bash
+npm start
+```
+
+L'application sera disponible sur `http://localhost:3000`
+
+### Outils de développement
+
+- **React Developer Tools** : Extension navigateur
+- **Redux DevTools** : Si Redux est ajouté
+- **Console** : Logs détaillés en mode développement
+
+## 🤝 Contribution
+
+1. Fork le projet
+2. Créer une branche feature (`git checkout -b feature/AmazingFeature`)
+3. Commit les changements (`git commit -m 'Add some AmazingFeature'`)
+4. Push vers la branche (`git push origin feature/AmazingFeature`)
+5. Ouvrir une Pull Request
+
+## 📄 Licence
+
+Ce projet est sous licence MIT. Voir le fichier `LICENSE` pour plus de détails.
+
+## 🆘 Support
+
+Pour toute question ou problème :
+
+1. Consultez la documentation
+2. Vérifiez les issues existantes
+3. Créez une nouvelle issue avec les détails
+
+---
+
+**Garméa** - Découvrez vos ancêtres avec l'intelligence artificielle 🧬

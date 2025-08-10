@@ -1,4 +1,3 @@
-import fitz
 import re
 import sys
 import logging
@@ -11,26 +10,27 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any, Union
 from dataclasses import dataclass, field
 from collections import defaultdict, Counter
-from functools import lru_cache, wraps
+from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
-    from csv_exporter import exporter_vers_csv
-    CSV_EXPORT_AVAILABLE = True
+    import fitz
+    HAS_PYMUPDF = True
 except ImportError:
-    CSV_EXPORT_AVAILABLE = False
+    HAS_PYMUPDF = False
+    fitz = None
 
 try:
-    from parsers.base.text_parser import TextParser
+    from ..base.text_parser import TextParser
     TEXT_PARSER_AVAILABLE = True
 except ImportError:
     TEXT_PARSER_AVAILABLE = False
 
 try:
-    from parsers.specialized.strict_parser import UltraStrictGenealogyParser
-    ULTRA_STRICT_PARSER_AVAILABLE = True
+    from .strict_parser import StrictParser
+    STRICT_PARSER_AVAILABLE = True
 except ImportError:
-    ULTRA_STRICT_PARSER_AVAILABLE = False
+    STRICT_PARSER_AVAILABLE = False
 
 logging.basicConfig(
     level=logging.INFO,
@@ -164,6 +164,10 @@ class VectorizedPDFManager:
         }
     
     def open_document(self, pdf_path: str) -> bool:
+        if not HAS_PYMUPDF:
+            self.logger.error("PyMuPDF non disponible")
+            return False
+        
         with self.lock:
             try:
                 if self.document is not None:
@@ -480,24 +484,25 @@ class VectorizedPDFManager:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close_document()
 
-class OptimizedSmartPDFAnalyzer:
-    def __init__(self):
+class PDFAnalyzer:
+    def __init__(self, config=None):
+        self.config = config or {}
         self.logger = logging.getLogger(__name__)
         self.performance_logger = OptimizedPerformanceLogger()
         
         if TEXT_PARSER_AVAILABLE:
-            self.text_parser = TextParser()
+            self.text_parser = TextParser(self.config)
             self.logger.info("TextParser loaded")
         else:
             self.text_parser = None
             self.logger.warning("TextParser not available")
         
-        if ULTRA_STRICT_PARSER_AVAILABLE:
-            self.genealogy_parser = UltraStrictGenealogyParser(self.text_parser)
-            self.logger.info("UltraStrictGenealogyParser loaded")
+        if STRICT_PARSER_AVAILABLE:
+            self.genealogy_parser = StrictParser(self.config)
+            self.logger.info("StrictParser loaded")
         else:
             self.genealogy_parser = None
-            self.logger.warning("UltraStrictGenealogyParser not available")
+            self.logger.warning("StrictParser not available")
         
         self.global_stats = {
             'documents_processed': 0,
@@ -506,9 +511,13 @@ class OptimizedSmartPDFAnalyzer:
             'processing_time_total': 0.0
         }
         
-        self.logger.info("OptimizedSmartPDFAnalyzer initialized")
+        self.logger.info("PDFAnalyzer initialized")
     
     def analyze_and_process_pdf(self, pdf_file: str, max_pages: Optional[int] = None) -> Optional[ProcessingResult]:
+        if not HAS_PYMUPDF:
+            self.logger.error("PyMuPDF required for PDF analysis")
+            return None
+        
         pdf_path = Path(pdf_file)
         
         if not pdf_path.exists():
@@ -600,50 +609,15 @@ class OptimizedSmartPDFAnalyzer:
             self.performance_logger.end_timer("text_normalization")
         else:
             normalized_text = text
-            normalization_result = {'normalized': text, 'ocr_corrections': [], 'abbreviations_expanded': []}
+            normalization_result = {'normalized': text, 'corrections': [], 'abbreviations_expanded': []}
         
         if self.genealogy_parser:
             self.performance_logger.start_timer("relation_extraction")
             
-            if hasattr(self.genealogy_parser, 'extract_filiations_ultra_strict'):
-                relations = self.genealogy_parser.extract_filiations_ultra_strict(normalized_text)
-                filiations_data = self.genealogy_parser.export_to_legacy_format(relations)
-                mariages_data = []
-                parrainages_data = []
-            else:
-                document = self.genealogy_parser.process_document(normalized_text)
-                filiations_data = [
-                    {
-                        'enfant': rel.entities.get('enfant', ''),
-                        'pere': rel.entities.get('pere', ''),
-                        'mere': rel.entities.get('mere', ''),
-                        'source_text': rel.source_text,
-                        'position': rel.position,
-                        'confiance': rel.confidence
-                    }
-                    for rel in document.filiations
-                ]
-                mariages_data = [
-                    {
-                        'epouse': rel.entities.get('epouse', ''),
-                        'epoux': rel.entities.get('epoux', ''),
-                        'statut': rel.entities.get('statut', 'mariée'),
-                        'source_text': rel.source_text,
-                        'position': rel.position,
-                        'confiance': rel.confidence
-                    }
-                    for rel in document.mariages
-                ]
-                parrainages_data = [
-                    {
-                        'type': rel.entities.get('role', ''),
-                        'personne': rel.entities.get('personne', ''),
-                        'source_text': rel.source_text,
-                        'position': rel.position,
-                        'confiance': rel.confidence
-                    }
-                    for rel in document.parrainages
-                ]
+            relations = self.genealogy_parser.extract_ultra_strict_filiations(normalized_text)
+            filiations_data = self.genealogy_parser.export_to_legacy_format(relations)
+            mariages_data = []
+            parrainages_data = []
             
             self.performance_logger.end_timer("relation_extraction")
         else:
@@ -653,10 +627,7 @@ class OptimizedSmartPDFAnalyzer:
         
         self.performance_logger.start_timer("person_extraction")
         
-        if self.text_parser:
-            persons_data = self.text_parser.extract_names_with_validation(normalized_text)
-        else:
-            persons_data = self._extract_persons_basic(normalized_text)
+        persons_data = self._extract_persons_basic(normalized_text)
         
         self.performance_logger.end_timer("person_extraction")
         
@@ -722,13 +693,13 @@ class OptimizedSmartPDFAnalyzer:
         confidences = []
         
         for rel in filiations:
-            if rel.get('enfant'):
-                persons_in_relations.add(rel['enfant'].lower())
-            if rel.get('pere'):
-                persons_in_relations.add(rel['pere'].lower())
-            if rel.get('mere'):
-                persons_in_relations.add(rel['mere'].lower())
-            confidences.append(float(rel.get('confiance', 0.5)))
+            if rel.get('Child'):
+                persons_in_relations.add(rel['Child'].lower())
+            if rel.get('Father'):
+                persons_in_relations.add(rel['Father'].lower())
+            if rel.get('Mother'):
+                persons_in_relations.add(rel['Mother'].lower())
+            confidences.append(float(rel.get('Confidence', 0.5)))
         
         for rel in mariages:
             if rel.get('epouse'):
@@ -838,7 +809,7 @@ class OptimizedSmartPDFAnalyzer:
         return stats
 
 def analyze_and_process_pdf_optimized(pdf_file: str, max_pages: Optional[int] = None) -> Optional[Dict]:
-    analyzer = OptimizedSmartPDFAnalyzer()
+    analyzer = PDFAnalyzer()
     result = analyzer.analyze_and_process_pdf(pdf_file, max_pages)
     
     if result is None:
@@ -854,57 +825,78 @@ def analyze_and_process_pdf_optimized(pdf_file: str, max_pages: Optional[int] = 
         'error': result.error_message
     }
 
+def export_to_csv(result: Dict, output_dir: str = "RESULT") -> Dict[str, str]:
+    if not result or not result.get('success', False):
+        return {}
+    
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True)
+    
+    csv_files = {}
+    genealogical = result.get('resultats_genealogiques', {})
+    
+    if genealogical.get('filiations'):
+        import csv
+        filiations_file = output_path / "filiations.csv"
+        with open(filiations_file, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=['ID', 'Child', 'Father', 'Mother', 'Confidence'])
+            writer.writeheader()
+            writer.writerows(genealogical['filiations'])
+        csv_files['filiations'] = str(filiations_file)
+    
+    if genealogical.get('personnes_extraites'):
+        import csv
+        persons_file = output_path / "personnes.csv"
+        with open(persons_file, 'w', newline='', encoding='utf-8') as f:
+            if genealogical['personnes_extraites']:
+                fieldnames = list(genealogical['personnes_extraites'][0].keys())
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(genealogical['personnes_extraites'])
+        csv_files['personnes'] = str(persons_file)
+    
+    return csv_files
+
 def main():
     import argparse
     
-    parser = argparse.ArgumentParser(
-        description="Smart PDF Analyzer - Ultra-Optimized Version"
-    )
-    parser.add_argument(
-        'pdf_file', 
-        nargs='?',
-        default=r'C:\Users\Louis\Documents\CodexGenea\inventairesommai03archuoft.pdf',
-        help='PDF file to analyze'
-    )
-    parser.add_argument(
-        '--max-pages', 
-        type=int, 
-        help='Maximum number of pages to analyze'
-    )
-    parser.add_argument(
-        '--output', 
-        help='Output file for results (JSON)'
-    )
-    parser.add_argument(
-        '--csv-dir',
-        default='RESULT',
-        help='Directory for CSV exports (default: RESULT)'
-    )
-    parser.add_argument(
-        '--no-csv',
-        action='store_true',
-        help='Disable automatic CSV export'
-    )
-    parser.add_argument(
-        '--verbose', 
-        action='store_true', 
-        help='Verbose mode'
-    )
+    DEFAULT_PDF = r"C:\Users\Louis\Documents\CodexGenea\inventairesommai03archuoft.pdf"
+    
+    parser = argparse.ArgumentParser(description="PDF Analyzer - Optimized Version")
+    parser.add_argument('pdf_file', nargs='?', default=DEFAULT_PDF, help=f'PDF file to analyze (default: {DEFAULT_PDF})')
+    parser.add_argument('--max-pages', type=int, help='Maximum number of pages to analyze')
+    parser.add_argument('--output', help='Output file for results (JSON)')
+    parser.add_argument('--csv-dir', default='RESULT', help='Directory for CSV exports')
+    parser.add_argument('--no-csv', action='store_true', help='Disable automatic CSV export')
+    parser.add_argument('--verbose', action='store_true', help='Verbose mode')
     
     args = parser.parse_args()
     
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
     
-    if not Path(args.pdf_file).exists():
+    pdf_path = Path(args.pdf_file)
+    if not pdf_path.exists():
         print(f"Error: File '{args.pdf_file}' not found")
+        print(f"Checking default path: {DEFAULT_PDF}")
+        
+        if Path(DEFAULT_PDF).exists():
+            print(f"Using default PDF: {DEFAULT_PDF}")
+            args.pdf_file = DEFAULT_PDF
+        else:
+            print("Default PDF also not found. Please specify a valid PDF file.")
+            sys.exit(1)
+    
+    if not HAS_PYMUPDF:
+        print("Error: PyMuPDF required. Install with: pip install PyMuPDF")
         sys.exit(1)
     
-    print("Smart PDF Analyzer - Ultra-Optimized Version 4.0")
-    print("=" * 50)
+    print("PDF Analyzer - Optimized Version with Default PDF")
+    print("=" * 60)
     print(f"File: {Path(args.pdf_file).name}")
+    print(f"Full path: {args.pdf_file}")
     print(f"Page limit: {args.max_pages or 'All'}")
-    if not args.no_csv and CSV_EXPORT_AVAILABLE:
+    if not args.no_csv:
         print(f"CSV export: {args.csv_dir}")
     print()
     
@@ -913,7 +905,7 @@ def main():
         
         if result:
             print("PROCESSING COMPLETED SUCCESSFULLY")
-            print("=" * 50)
+            print("=" * 60)
             
             if result.get('success', True):
                 print(f"Register pages found: {result['pages_registres']}")
@@ -922,8 +914,6 @@ def main():
                 print(f"Persons extracted: {len(genealogical.get('personnes_extraites', []))}")
                 print(f"Family relations: {genealogical.get('relations_count', 0)}")
                 print(f"  - Filiations: {len(genealogical.get('filiations', []))}")
-                print(f"  - Marriages: {len(genealogical.get('mariages', []))}")
-                print(f"  - Godparents: {len(genealogical.get('parrainages', []))}")
                 
                 quality = result.get('qualite_extraction', {})
                 print(f"Data quality: {quality.get('qualite_donnees', 'Not evaluated')}")
@@ -933,23 +923,21 @@ def main():
                 if 'total_processing' in performance:
                     print(f"Total time: {performance['total_processing']:.2f}s")
                 
-                if not args.no_csv and CSV_EXPORT_AVAILABLE:
+                if not args.no_csv:
                     print(f"\nAutomatic CSV export to {args.csv_dir}")
-                    print("-" * 30)
+                    print("-" * 40)
                     try:
-                        csv_files = exporter_vers_csv(result, args.csv_dir)
-                        print(f"CSV files created:")
-                        for file_type, path in csv_files.items():
-                            filename = Path(path).name
-                            print(f"  - {file_type}: {filename}")
-                        
-                        print(f"\nAll files are in: {Path(args.csv_dir).absolute()}")
-                        
+                        csv_files = export_to_csv(result, args.csv_dir)
+                        if csv_files:
+                            print(f"CSV files created:")
+                            for file_type, path in csv_files.items():
+                                filename = Path(path).name
+                                print(f"  - {file_type}: {filename}")
+                            print(f"\nAll files are in: {Path(args.csv_dir).absolute()}")
+                        else:
+                            print("No data to export")
                     except Exception as e:
                         print(f"CSV export error: {e}")
-                        if args.verbose:
-                            import traceback
-                            traceback.print_exc()
             else:
                 print(f"PARTIAL PROCESSING: {result.get('error', 'Unknown error')}")
             

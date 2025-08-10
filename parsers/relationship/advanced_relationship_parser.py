@@ -1,13 +1,11 @@
-# parsers/modern_nlp_parser.py
-import spacy
 import re
+import logging
 from typing import List, Dict, Optional, Tuple, Union
 from dataclasses import dataclass
 from functools import lru_cache
-import logging
 
 try:
-    # Essayer d'importer spaCy
+    import spacy
     nlp = spacy.load("fr_core_news_sm")
     HAS_SPACY = True
 except (ImportError, OSError):
@@ -15,103 +13,128 @@ except (ImportError, OSError):
     nlp = None
 
 @dataclass
-class RelationshipMatch:
-    """Résultat d'extraction de relation avec confiance"""
+class EnhancedRelationshipMatch:
     type: str
     persons: Dict[str, str]
     confidence: float
     source_span: Tuple[int, int]
     context: str
+    extraction_method: str = "basic"
+    validation_score: float = 0.0
+    contextual_indicators: List[str] = None
 
-class ModernNLPParser:
-    """Parser NLP moderne pour remplacer les regex fragiles"""
-    
-    def __init__(self, fallback_to_regex: bool = True):
+class AdvancedRelationshipParser:
+    def __init__(self, config=None, fallback_to_basic: bool = True):
+        self.config = config or {}
         self.logger = logging.getLogger(__name__)
+        self.fallback_to_basic = fallback_to_basic
         self.use_spacy = HAS_SPACY
-        self.fallback_to_regex = fallback_to_regex
+        
+        self.stats = {
+            'total_processed': 0, 'spacy_extractions': 0, 'regex_extractions': 0,
+            'fallback_used': 0, 'validation_passed': 0
+        }
         
         if self.use_spacy:
-            self.logger.info("Utilisation de spaCy pour NLP avancé")
+            self.logger.info("Initialisation parser NLP avancé avec spaCy")
             self._setup_spacy_patterns()
         else:
-            self.logger.warning("spaCy non disponible, utilisation regex de fallback")
+            self.logger.warning("spaCy non disponible, mode regex uniquement")
         
-        # Patterns de fallback (vos regex existants optimisés)
-        self._setup_fallback_patterns()
-        
-        # Cache pour les entités nommées
+        self._setup_regex_patterns()
         self._entity_cache = {}
     
     def _setup_spacy_patterns(self):
-        """Configure les patterns spaCy personnalisés"""
         if not self.use_spacy:
             return
-            
+        
         from spacy.matcher import Matcher
         self.matcher = Matcher(nlp.vocab)
         
-        # Pattern pour filiation
         filiation_pattern = [
             {"LOWER": {"IN": ["fils", "fille", "filz"]}},
             {"LOWER": "de"},
-            {"POS": "PROPN", "OP": "+"},  # Nom du père
+            {"POS": "PROPN", "OP": "+"},
             {"LOWER": {"IN": ["et", "de"]}, "OP": "?"},
             {"LOWER": "de", "OP": "?"},
-            {"POS": "PROPN", "OP": "*"}   # Nom de la mère
+            {"POS": "PROPN", "OP": "*"}
         ]
         self.matcher.add("FILIATION", [filiation_pattern])
         
-        # Pattern pour mariage
         mariage_pattern = [
-            {"POS": "PROPN", "OP": "+"},  # Nom épouse
+            {"POS": "PROPN", "OP": "+"},
             {"LOWER": {"IN": ["épouse", "femme", "veuve"]}},
             {"LOWER": "de"},
-            {"POS": "PROPN", "OP": "+"}   # Nom époux
+            {"POS": "PROPN", "OP": "+"}
         ]
         self.matcher.add("MARIAGE", [mariage_pattern])
         
-        # Pattern pour parrainage
         parrain_pattern = [
-            {"LOWER": {"IN": ["parr", "parrain"]}},
+            {"LOWER": {"IN": ["parr", "parrain", "marr", "marraine"]}},
             {"IS_PUNCT": True, "OP": "?"},
             {"POS": "PROPN", "OP": "+"}
         ]
         self.matcher.add("PARRAIN", [parrain_pattern])
     
-    def _setup_fallback_patterns(self):
-        """Patterns regex optimisés pour fallback"""
-        self.fallback_patterns = {
+    def _setup_regex_patterns(self):
+        name_pattern = r'[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+'
+        
+        self.regex_patterns = {
             'filiation': re.compile(
-                r'([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+),?\s+'
-                r'(?:fils|fille|filz)\s+de\s+'
-                r'([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s,]+?)'
-                r'(?:\s+et\s+(?:de\s+)?([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+))?',
+                rf'({name_pattern}),?\s*(?:fils|fille|filz)\s+de\s+({name_pattern})(?:\s+et\s+(?:de\s+)?({name_pattern}))?',
                 re.IGNORECASE
             ),
-            'mariage': re.compile(
-                r'([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s]+),?\s+'
-                r'(?:épouse|femme|veuve)\s+de\s+'
-                r'([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ\s,]+)',
+            'marriage': re.compile(
+                rf'({name_pattern}),?\s*(?:épouse|femme|veuve)\s+de\s+({name_pattern})',
+                re.IGNORECASE
+            ),
+            'godparent': re.compile(
+                rf'(?:parrain|marraine|parr|marr)\s*:?\s*({name_pattern})',
                 re.IGNORECASE
             )
         }
     
-    def extract_relationships(self, text: str) -> List[RelationshipMatch]:
-        """Extraction intelligente des relations avec NLP + fallback"""
+    def extract_relationships(self, text: str) -> List[EnhancedRelationshipMatch]:
+        if not text:
+            return []
+        
+        self.stats['total_processed'] += 1
+        
         relationships = []
         
         if self.use_spacy:
-            relationships.extend(self._extract_with_spacy(text))
+            spacy_results = self._extract_with_spacy(text)
+            relationships.extend(spacy_results)
+            self.stats['spacy_extractions'] += len(spacy_results)
         
-        if self.fallback_to_regex:
-            relationships.extend(self._extract_with_regex(text))
+        regex_results = self._extract_with_regex(text)
+        relationships.extend(regex_results)
+        self.stats['regex_extractions'] += len(regex_results)
         
-        # Déduplication et scoring
-        return self._deduplicate_and_score(relationships)
+        if self.fallback_to_basic and not relationships:
+            try:
+                from .basic_relationship_parser import BasicRelationshipParser
+                basic_parser = BasicRelationshipParser(self.config)
+                basic_results = basic_parser.extract_relationships(text)
+                
+                relationships = [
+                    EnhancedRelationshipMatch(
+                        type=r.type,
+                        persons=r.entities,
+                        confidence=r.confidence * 0.8,
+                        source_span=r.position,
+                        context=r.source_text,
+                        extraction_method="fallback_basic"
+                    )
+                    for r in basic_results
+                ]
+                self.stats['fallback_used'] += 1
+            except ImportError:
+                self.logger.warning("Fallback parser non disponible")
+        
+        return self._deduplicate_and_enhance(relationships)
     
-    def _extract_with_spacy(self, text: str) -> List[RelationshipMatch]:
-        """Extraction avec spaCy NLP"""
+    def _extract_with_spacy(self, text: str) -> List[EnhancedRelationshipMatch]:
         if not self.use_spacy:
             return []
         
@@ -126,50 +149,92 @@ class ModernNLPParser:
                 
                 if match_label == "FILIATION":
                     rel = self._parse_filiation_spacy(span, text)
-                    if rel:
-                        relationships.append(rel)
-                
                 elif match_label == "MARIAGE":
-                    rel = self._parse_mariage_spacy(span, text)
-                    if rel:
-                        relationships.append(rel)
-                
+                    rel = self._parse_marriage_spacy(span, text)
                 elif match_label == "PARRAIN":
-                    rel = self._parse_parrain_spacy(span, text)
-                    if rel:
-                        relationships.append(rel)
+                    rel = self._parse_godparent_spacy(span, text)
+                else:
+                    continue
+                
+                if rel:
+                    relationships.append(rel)
             
             return relationships
             
         except Exception as e:
-            self.logger.error(f"Erreur spaCy: {e}")
+            self.logger.error(f"Erreur extraction spaCy: {e}")
             return []
     
-    def _parse_filiation_spacy(self, span, full_text: str) -> Optional[RelationshipMatch]:
-        """Parse une filiation détectée par spaCy"""
+    def _extract_with_regex(self, text: str) -> List[EnhancedRelationshipMatch]:
+        relationships = []
+        
+        for rel_type, pattern in self.regex_patterns.items():
+            for match in pattern.finditer(text):
+                if rel_type == "filiation":
+                    rel = EnhancedRelationshipMatch(
+                        type="filiation",
+                        persons={
+                            "child": match.group(1).strip(),
+                            "father": match.group(2).strip(),
+                            "mother": match.group(3).strip() if match.group(3) else None
+                        },
+                        confidence=0.75,
+                        source_span=match.span(),
+                        context=match.group(0),
+                        extraction_method="regex"
+                    )
+                elif rel_type == "marriage":
+                    rel = EnhancedRelationshipMatch(
+                        type="marriage",
+                        persons={
+                            "wife": match.group(1).strip(),
+                            "husband": match.group(2).strip()
+                        },
+                        confidence=0.80,
+                        source_span=match.span(),
+                        context=match.group(0),
+                        extraction_method="regex"
+                    )
+                elif rel_type == "godparent":
+                    rel = EnhancedRelationshipMatch(
+                        type="godparent",
+                        persons={
+                            "godparent": match.group(1).strip()
+                        },
+                        confidence=0.70,
+                        source_span=match.span(),
+                        context=match.group(0),
+                        extraction_method="regex"
+                    )
+                else:
+                    continue
+                
+                if rel:
+                    relationships.append(rel)
+        
+        return relationships
+    
+    def _parse_filiation_spacy(self, span, full_text: str) -> Optional[EnhancedRelationshipMatch]:
         try:
-            # Analyser les entités nommées dans le span
             entities = [ent for ent in span.ents if ent.label_ == "PER"]
             
             if len(entities) >= 2:
-                # Premier = père, deuxième = mère (si présente)
-                pere = entities[0].text
-                mere = entities[1].text if len(entities) > 1 else None
+                father = entities[0].text
+                mother = entities[1].text if len(entities) > 1 else None
+                child = self._find_child_in_context(span.start_char, full_text)
                 
-                # Chercher l'enfant dans le contexte précédent
-                enfant = self._find_child_in_context(span.start_char, full_text)
-                
-                if enfant:
-                    return RelationshipMatch(
+                if child:
+                    return EnhancedRelationshipMatch(
                         type="filiation",
                         persons={
-                            "enfant": enfant,
-                            "pere": pere,
-                            "mere": mere
+                            "child": child,
+                            "father": father,
+                            "mother": mother
                         },
-                        confidence=0.85,  # Confiance spaCy
+                        confidence=0.85,
                         source_span=(span.start_char, span.end_char),
-                        context=span.text
+                        context=span.text,
+                        extraction_method="spacy"
                     )
             
         except Exception as e:
@@ -177,42 +242,42 @@ class ModernNLPParser:
         
         return None
     
-    def _parse_mariage_spacy(self, span, full_text: str) -> Optional[RelationshipMatch]:
-        """Parse un mariage détecté par spaCy"""
+    def _parse_marriage_spacy(self, span, full_text: str) -> Optional[EnhancedRelationshipMatch]:
         try:
             entities = [ent for ent in span.ents if ent.label_ == "PER"]
             
             if len(entities) >= 2:
-                return RelationshipMatch(
-                    type="mariage",
+                return EnhancedRelationshipMatch(
+                    type="marriage",
                     persons={
-                        "epouse": entities[0].text,
-                        "epoux": entities[1].text
+                        "wife": entities[0].text,
+                        "husband": entities[1].text
                     },
                     confidence=0.82,
                     source_span=(span.start_char, span.end_char),
-                    context=span.text
+                    context=span.text,
+                    extraction_method="spacy"
                 )
         except Exception as e:
             self.logger.debug(f"Erreur parse mariage spaCy: {e}")
         
         return None
     
-    def _parse_parrain_spacy(self, span, full_text: str) -> Optional[RelationshipMatch]:
-        """Parse un parrainage détecté par spaCy"""
+    def _parse_godparent_spacy(self, span, full_text: str) -> Optional[EnhancedRelationshipMatch]:
         try:
             entities = [ent for ent in span.ents if ent.label_ == "PER"]
             
             if entities:
-                return RelationshipMatch(
-                    type="parrainage",
+                return EnhancedRelationshipMatch(
+                    type="godparent",
                     persons={
-                        "parrain": entities[0].text,
-                        "filleul": self._find_child_in_context(span.start_char, full_text)
+                        "godparent": entities[0].text,
+                        "godchild": self._find_child_in_context(span.start_char, full_text)
                     },
                     confidence=0.80,
                     source_span=(span.start_char, span.end_char),
-                    context=span.text
+                    context=span.text,
+                    extraction_method="spacy"
                 )
         except Exception as e:
             self.logger.debug(f"Erreur parse parrain spaCy: {e}")
@@ -220,75 +285,80 @@ class ModernNLPParser:
         return None
     
     def _find_child_in_context(self, span_start: int, text: str, window: int = 100) -> Optional[str]:
-        """Trouve l'enfant dans le contexte précédant la filiation"""
-        # Chercher dans les 100 caractères précédents
         context_start = max(0, span_start - window)
         context = text[context_start:span_start]
         
-        # Pattern simple pour nom d'enfant
         child_pattern = re.compile(r'([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ]+)(?:,|\s)', re.IGNORECASE)
         matches = child_pattern.findall(context)
         
         return matches[-1] if matches else None
     
-    def _extract_with_regex(self, text: str) -> List[RelationshipMatch]:
-        """Extraction avec regex de fallback"""
-        relationships = []
-        
-        for rel_type, pattern in self.fallback_patterns.items():
-            for match in pattern.finditer(text):
-                if rel_type == "filiation":
-                    rel = RelationshipMatch(
-                        type="filiation",
-                        persons={
-                            "enfant": match.group(1).strip(),
-                            "pere": match.group(2).strip(),
-                            "mere": match.group(3).strip() if match.group(3) else None
-                        },
-                        confidence=0.75,  # Confiance regex moindre
-                        source_span=match.span(),
-                        context=match.group(0)
-                    )
-                    relationships.append(rel)
-                
-                elif rel_type == "mariage":
-                    rel = RelationshipMatch(
-                        type="mariage",
-                        persons={
-                            "epouse": match.group(1).strip(),
-                            "epoux": match.group(2).strip()
-                        },
-                        confidence=0.80,
-                        source_span=match.span(),
-                        context=match.group(0)
-                    )
-                    relationships.append(rel)
-        
-        return relationships
-    
-    def _deduplicate_and_score(self, relationships: List[RelationshipMatch]) -> List[RelationshipMatch]:
-        """Déduplique et score les relations trouvées"""
+    def _deduplicate_and_enhance(self, relationships: List[EnhancedRelationshipMatch]) -> List[EnhancedRelationshipMatch]:
         if not relationships:
             return []
         
-        # Grouper par type et positions similaires
         unique_relations = {}
         
         for rel in relationships:
-            # Créer une clé unique
-            key = f"{rel.type}_{rel.persons.get('enfant', '')}_{rel.persons.get('epouse', '')}"
+            key = f"{rel.type}_{rel.persons.get('child', '')}_{rel.persons.get('wife', '')}"
             
             if key not in unique_relations or rel.confidence > unique_relations[key].confidence:
-                unique_relations[key] = rel
+                enhanced_rel = self._enhance_relationship(rel)
+                unique_relations[key] = enhanced_rel
         
-        # Trier par confiance
         return sorted(unique_relations.values(), key=lambda x: x.confidence, reverse=True)
+    
+    def _enhance_relationship(self, rel: EnhancedRelationshipMatch) -> EnhancedRelationshipMatch:
+        validation_score = self._validate_relationship_context(rel)
+        rel.validation_score = validation_score
+        
+        if validation_score > 0.8:
+            rel.confidence = min(rel.confidence + 0.1, 1.0)
+        
+        rel.contextual_indicators = self._extract_contextual_indicators(rel.context)
+        
+        if rel.validation_score > 0.5:
+            self.stats['validation_passed'] += 1
+        
+        return rel
+    
+    def _validate_relationship_context(self, rel: EnhancedRelationshipMatch) -> float:
+        context_lower = rel.context.lower()
+        score = 0.5
+        
+        genealogical_terms = ['baptême', 'église', 'curé', 'paroisse', 'mariage', 'inhumation']
+        for term in genealogical_terms:
+            if term in context_lower:
+                score += 0.1
+        
+        if re.search(r'\d{4}', rel.context):
+            score += 0.2
+        
+        noble_titles = ['sieur', 'écuyer', 'seigneur', 'comte', 'baron', 'dame']
+        for title in noble_titles:
+            if title in context_lower:
+                score += 0.1
+        
+        return min(score, 1.0)
+    
+    def _extract_contextual_indicators(self, context: str) -> List[str]:
+        indicators = []
+        context_lower = context.lower()
+        
+        if 'baptême' in context_lower or 'bapt' in context_lower:
+            indicators.append('baptism_context')
+        if 'mariage' in context_lower:
+            indicators.append('marriage_context')
+        if 'curé' in context_lower or 'prêtre' in context_lower:
+            indicators.append('clerical_context')
+        if re.search(r'\d{4}', context):
+            indicators.append('dated_context')
+        
+        return indicators
     
     @lru_cache(maxsize=1000)
     def get_person_entities(self, text: str) -> List[str]:
-        """Cache des entités personnes extraites"""
         if not self.use_spacy:
-            # Fallback simple
             names = re.findall(r'\b[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ]+(?:\s+[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß][a-zàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ]+)+', text)
             return list(set(names))
         
@@ -299,117 +369,13 @@ class ModernNLPParser:
         except Exception:
             return []
     
-    def validate_relationship(self, relationship: RelationshipMatch, context: str = "") -> float:
-        """Valide une relation avec scoring contextuel"""
-        base_confidence = relationship.confidence
-        
-        # Bonifications contextuelles
-        context_lower = context.lower()
-        
-        # Contexte paroissial augmente la confiance
-        if any(word in context_lower for word in ['baptême', 'église', 'curé', 'paroisse']):
-            base_confidence += 0.05
-        
-        # Présence de dates augmente la confiance
-        if re.search(r'\d{4}|\d{1,2}\s+(?:janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)', context_lower):
-            base_confidence += 0.03
-        
-        # Titres de noblesse augmentent la confiance  
-        if any(word in context_lower for word in ['sieur', 'écuyer', 'seigneur', 'comte', 'baron']):
-            base_confidence += 0.02
-        
-        return min(base_confidence, 1.0)  # Cap à 1.0
-    
-    def get_parsing_stats(self) -> Dict:
-        """Statistiques du parser"""
+    def get_stats(self) -> Dict:
         return {
-            'nlp_engine': 'spaCy' if self.use_spacy else 'regex_fallback',
+            **self.stats,
             'spacy_available': HAS_SPACY,
-            'entity_cache_size': len(self._entity_cache),
-            'patterns_count': len(self.fallback_patterns) if hasattr(self, 'fallback_patterns') else 0
-        }
-
-# FIX: Parser de base pour compatibilité
-class FallbackRelationshipParser:
-    """Parser de base compatible avec l'interface existante"""
-    
-    def __init__(self, config=None):
-        self.config = config
-        self.logger = logging.getLogger(__name__)
-    
-    def extract_relationships(self, text: str) -> List[Dict]:
-        """Interface compatible avec l'ancien parser"""
-        modern_parser = ModernNLPParser()
-        relationships = modern_parser.extract_relationships(text)
-        
-        # Convertir au format attendu
-        return [
-            {
-                'type': rel.type,
-                'persons': rel.persons,
-                'confidence': rel.confidence,
-                'context': rel.context
+            'extraction_methods': {
+                'spacy': self.stats['spacy_extractions'],
+                'regex': self.stats['regex_extractions'],
+                'fallback': self.stats['fallback_used']
             }
-            for rel in relationships
-        ]
-
-# Factory function corrigée
-def create_relationship_parser(prefer_nlp: bool = True) -> Union[ModernNLPParser, FallbackRelationshipParser]:
-    """Factory pour créer le parser optimal selon l'environnement"""
-    
-    if prefer_nlp and HAS_SPACY:
-        return ModernNLPParser(fallback_to_regex=True)
-    else:
-        # FIX: Utiliser le parser de fallback intégré
-        try:
-            from config.settings import ParserConfig
-            from parsers.relationship.basic_relationship_parser import RelationshipParser
-            return RelationshipParser(ParserConfig())
-        except ImportError:
-            # Si l'import échoue, utiliser notre fallback
-            return FallbackRelationshipParser()
-
-# Instructions d'installation pour améliorer les performances
-INSTALL_INSTRUCTIONS = """
-Pour activer le parsing NLP avancé, installez spaCy :
-
-pip install spacy
-python -m spacy download fr_core_news_sm
-
-Cela améliorera significativement la précision et robustesse du parsing !
-"""
-
-if __name__ == "__main__":
-    # Test de démonstration
-    parser = create_relationship_parser()
-    
-    sample_text = """
-    1651, 24 oct., naissance, bapt. de Charlotte, fille de Jean Le Boucher, 
-    éc., sr de La Granville, et de Françoise Varin; marr.: Perrette Dupré; 
-    parr.: Charles Le Boucher, éc., sr du Hozey.
-    """
-    
-    print("=== TEST PARSER MODERNE ===")
-    print(f"Engine: {parser.__class__.__name__}")
-    
-    if hasattr(parser, 'extract_relationships'):
-        # Parser moderne
-        relationships = parser.extract_relationships(sample_text)
-        
-        if isinstance(relationships, list) and len(relationships) > 0:
-            if isinstance(relationships[0], RelationshipMatch):
-                # Format ModernNLPParser
-                for rel in relationships:
-                    print(f"\nType: {rel.type}")
-                    print(f"Personnes: {rel.persons}")
-                    print(f"Confiance: {rel.confidence:.2f}")
-                    print(f"Contexte: {rel.context[:80]}...")
-            else:
-                # Format dict
-                for rel in relationships:
-                    print(f"\nType: {rel.get('type')}")
-                    print(f"Personnes: {rel.get('persons')}")
-                    print(f"Confiance: {rel.get('confidence', 0):.2f}")
-    
-    if not HAS_SPACY:
-        print("\n" + INSTALL_INSTRUCTIONS)
+        }
